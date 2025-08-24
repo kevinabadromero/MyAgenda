@@ -14,3 +14,4 @@ export async function http<T>(path: string, init?: RequestInit): Promise<T> {
   });
   if (!res.ok) throw new Error(await res.text());
   return res.json() as Promise<T>;
+}

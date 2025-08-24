@@ -1,29 +1,55 @@
-import { createContext, useContext, useEffect, useState } from "react";
-import type { OwnerProfile } from "./types";
+// src/profile.tsx
+import { createContext, useContext, useEffect, useMemo, useState } from "react";
 import { getProfile } from "./lib/api";
 
-type State = { loading: boolean; profile?: OwnerProfile; error?: string };
-const Ctx = createContext<State>({ loading: true });
+type Profile = {
+  id:string; slug:string; name:string;
+  timezone:string;                 // ← NUEVO
+  favicon:string|null; logo:string|null;
+  theme:{ primary:string; bg:string; fg:string };
+};
 
-function applyBranding(p?: OwnerProfile) {
-  if (!p) return;
-  document.title = p.name || "MyAgenda";
-  document.querySelectorAll('link[rel="icon"].brand-dyn').forEach(n => n.remove());
-  const link = document.createElement('link');
-  link.rel = 'icon'; link.href = p.favicon; link.className = 'brand-dyn';
-  document.head.appendChild(link);
-  if (p.theme?.bg) document.documentElement.style.setProperty('--bg', p.theme.bg);
-  if (p.theme?.fg) document.documentElement.style.setProperty('--fg', p.theme.fg);
-  if (p.theme?.primary) document.documentElement.style.setProperty('--primary', p.theme.primary);
+const Ctx = createContext<{profile:Profile|null, loading:boolean, error?:string} | null>(null);
+
+function setFavicon(href: string) {
+  let link = document.querySelector<HTMLLinkElement>('link[rel="icon"]');
+  if (!link) {
+    link = document.createElement("link");
+    link.rel = "icon";
+    document.head.appendChild(link);
+  }
+  link.href = href;
 }
 
 export function ProfileProvider({ children }: { children: React.ReactNode }) {
-  const [state, setState] = useState<State>({ loading: true });
+  const [profile, setProfile] = useState<Profile|null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setErr] = useState<string>();
+
   useEffect(() => {
-    getProfile()
-      .then(p => { applyBranding(p); setState({ loading:false, profile:p }); })
-      .catch(e => setState({ loading:false, error:String(e) }));
+    (async () => {
+      try {
+        const p = await getProfile();
+        setProfile(p as any);
+        document.title = p.name || "MyAgenda";
+        if (p.favicon) setFavicon(p.favicon);
+        document.documentElement.style.setProperty("--primary", p.theme?.primary || "#2563EB");
+        document.body.style.background = p.theme?.bg || "#fff";
+        document.body.style.color = p.theme?.fg || "#111";
+      } catch (e:any) {
+        setErr(e?.message || "profile_error");
+      } finally {
+        setLoading(false);
+      }
+    })();
   }, []);
-  return <Ctx.Provider value={state}>{children}</Ctx.Provider>;
+
+  const value = useMemo(() => ({ profile, loading, error }), [profile, loading, error]);
+  return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }
-export const useProfile = () => useContext(Ctx);
+
+export function useProfile() {
+  const ctx = useContext(Ctx);
+  if (!ctx) throw new Error("useProfile must be inside ProfileProvider");
+  return ctx;
+}

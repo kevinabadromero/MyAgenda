@@ -44,6 +44,7 @@ r.get('/profile', async (req, res) => {
       name: owner.name,
       favicon: owner.favicon || '/favicon.ico',
       logo: owner.logo || null,
+      timezone: owner.timezone,   
       theme: {
         primary: owner.primary_hex || '#2563EB',
         bg: owner.bg_hex || '#FFFFFF',
@@ -88,91 +89,115 @@ r.get('/event-types', async (req, res) => {
 });
 
 /** GET /public/slots?host=...&eventType=...&date=YYYY-MM-DD */
-r.get('/slots', async (req, res) => {
-  const q = z.object({
-    host: z.string().optional(),
-    eventType: z.string(),
-    date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/)
-  }).safeParse({ ...req.query });
-  if (!q.success) return res.status(400).json({ error: 'bad_request' });
-
-  const host = q.data.host || getHost(req);
-  const conn = await pool.getConnection();
-
-  try {
-    const owner = await getOwnerByHost(conn, host);
-    if (!owner) return res.status(404).json({ error: 'owner_not_found' });
-
-    const [etr] = await conn.execute(
-      `SELECT id, name, duration_min, buffer_min
-         FROM event_types
-        WHERE user_id=? AND slug=? AND is_active=1
-        LIMIT 1`,
-      [owner.id, q.data.eventType]
-    );
-    const et = etr[0];
-    if (!et) return res.status(404).json({ error: 'event_type_not_found' });
-
-    // weekday 0..6 (Dom=0) en TZ del owner
-    let wd = DateTime.fromISO(q.data.date, { zone: owner.timezone }).weekday; // 1..7 (Mon..Sun)
-    wd = wd % 7;
-
-    const [avRows] = await conn.execute(
-      `SELECT start_min, end_min
-         FROM availability
-        WHERE user_id=? AND weekday=?`,
-      [owner.id, wd]
-    );
-
-    // Rango del día en UTC (para traer bookings solapados)
-    const { startUTC, endUTC } = dayBoundsUTC(q.data.date, owner.timezone);
-
-    const [bkRows] = await conn.execute(
-      `SELECT starts_at, ends_at
-         FROM bookings
-        WHERE user_id=?
-          AND status='confirmed'
-          AND starts_at < ?
-          AND ends_at   > ?`,
-      [owner.id,
-       endUTC.toSQL({ includeOffset:false }),
-       startUTC.toSQL({ includeOffset:false })]
-    );
-
-    const busy = bkRows.map(b => ([
-      DateTime.fromSQL(b.starts_at, { zone: 'utc' }),
-      DateTime.fromSQL(b.ends_at,   { zone: 'utc' })
-    ]));
-
-    const step = et.duration_min;
-    const buffer = et.buffer_min || 0;
-    const leadMin = 30;
-    const nowUTC = DateTime.utc();
-
-    const out = [];
-    const baseLocal = DateTime.fromISO(q.data.date, { zone: owner.timezone }).startOf('day');
-
-    for (const a of avRows) {
-      for (let t = a.start_min; t + step <= a.end_min; t += (step + buffer)) {
-        const startLocal = baseLocal.plus({ minutes: t });
-        const endLocal   = startLocal.plus({ minutes: step });
-
-        const startUTCslot = startLocal.toUTC();
-        const endUTCslot   = endLocal.toUTC();
-
-        if (startUTCslot.diff(nowUTC, 'minutes').minutes < leadMin) continue;
-
-        const overlaps = busy.some(([s,e]) => startUTCslot < e && endUTCslot > s);
-        if (!overlaps) {
-          out.push({ iso: startUTCslot.toISO(), label: startLocal.toFormat('HH:mm') });
+r.get("/slots", async (req, res) => {
+    const host = getHost(req);
+  
+    const parsed = z.object({
+      eventType: z.string().min(1),
+      date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/)
+    }).safeParse({ eventType: req.query.eventType, date: req.query.date });
+  
+    if (!host) return res.status(400).json({ error: "host_required" });
+    if (!parsed.success) return res.status(400).json({ error: "bad_request" });
+  
+    const { eventType, date } = parsed.data;
+  
+    const conn = await pool.getConnection();
+    try {
+      const owner = await getOwnerByHost(conn, host);
+      if (!owner) return res.status(404).json({ error: "owner_not_found" });
+  
+      // tipo de evento
+      const [etRows] = await conn.execute(
+        `SELECT id, duration_min, buffer_min
+           FROM event_types
+          WHERE user_id=? AND slug=? AND is_active=1
+          LIMIT 1`,
+        [owner.id, eventType]
+      );
+      const et = etRows[0];
+      if (!et) return res.status(404).json({ error: "event_type_not_found" });
+  
+      const durationMin = Number(et.duration_min);
+      const bufferMin   = Number(et.buffer_min || 0);
+  
+      // ventana del día en TZ del owner → UTC (formato MySQL)
+      const dayStart = DateTime.fromISO(date, { zone: owner.timezone }).startOf("day");
+      const dayEnd   = dayStart.endOf("day");
+      const startSQL = dayStart.toUTC().toFormat("yyyy-LL-dd HH:mm:ss.SSS");
+      const endSQL   = dayEnd.toUTC().toFormat("yyyy-LL-dd HH:mm:ss.SSS");
+  
+      // weekday (0=Dom .. 6=Sáb) → Luxon: 1=Lun .. 7=Dom
+      const weekday = dayStart.weekday % 7; // 7%7=0 → Domingo
+  
+      // disponibilidad del día
+      const [availRows] = await conn.execute(
+        `SELECT start_min, end_min
+           FROM availability
+          WHERE user_id=? AND weekday=?
+          ORDER BY start_min ASC`,
+        [owner.id, weekday]
+      );
+      if (availRows.length === 0) return res.json({ slots: [] });
+  
+      // reservas del día (cualquier tipo), con buffer del tipo reservado
+      const [bkRows] = await conn.execute(
+        `SELECT b.starts_at, b.ends_at, et.buffer_min AS booking_buffer_min
+           FROM bookings b
+           JOIN event_types et ON et.id = b.event_type_id
+          WHERE b.user_id=? AND b.status <> 'cancelled'
+            AND b.starts_at < ? AND b.ends_at > ?`,
+        [owner.id, endSQL, startSQL]
+      );
+  
+      // normalizar a ms UTC
+      const dayStartMs = dayStart.toUTC().toMillis();
+      const bookings = bkRows.map(row => ({
+        startMs: new Date(row.starts_at).getTime(),
+        endMs:   new Date(row.ends_at).getTime(),
+        bufferAfterMs: Number(row.booking_buffer_min || 0) * 60000
+      }));
+  
+      const durationMs = durationMin * 60000;
+      const bufferAfterMs = bufferMin * 60000;
+      const stepMs = durationMs; // slots cada "duración"
+  
+      const slots = [];
+  
+      for (const a of availRows) {
+        const rangeStartMs = dayStartMs + Number(a.start_min) * 60000;
+        const rangeEndMs   = dayStartMs + Number(a.end_min)   * 60000;
+  
+        // candidato s: debe caber con SU buffer dentro de la franja
+        for (let s = rangeStartMs; s + durationMs + bufferAfterMs <= rangeEndMs + 1; s += stepMs) {
+          const sEndPadded = s + durationMs + bufferAfterMs;
+  
+          // conflictivo si se solapa con alguna reserva considerando el buffer de esa reserva
+          let ok = true;
+          for (const b of bookings) {
+            const bEndPadded = b.endMs + b.bufferAfterMs;
+            // solape si [s, sEndPadded) ∩ [b.startMs, bEndPadded) ≠ ∅
+            if (s < bEndPadded && sEndPadded > b.startMs) { ok = false; break; }
+          }
+          if (!ok) continue;
+  
+          const iso = new Date(s).toISOString(); // UTC, lo usa el front tal cual
+          const label = new Date(s).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  
+          slots.push({ iso, label });
         }
       }
+  
+      // ordena y responde
+      slots.sort((a,b) => new Date(a.iso).getTime() - new Date(b.iso).getTime());
+      res.json({ slots });
+    } catch (e) {
+      console.error(e);
+      res.status(500).json({ error: "internal_error" });
+    } finally {
+      conn.release();
     }
-    res.json({ slots: out });
-  } catch (e) {
-    console.error(e); res.status(500).json({ error: 'internal_error' });
-  } finally { conn.release(); }
-});
+  });
 
 /** POST /public/book?host=...
  * body: { eventType, guestName, guestEmail, startISO(UTC) }
