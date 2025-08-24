@@ -7,6 +7,7 @@ const app = express();
 app.set('trust proxy', true);
 app.use(express.json());
 app.use(morgan('tiny'));
+app.use(express.urlencoded({ extended: true }));
 
 // CORS
 const allowed = (process.env.ALLOWED_ORIGINS || '*')
@@ -23,8 +24,9 @@ app.use(cors({
 
 // Rutas
 app.use('/public', require('./routes/public'));
-app.get('/health', (_req, res) => res.json({ ok: true }));
-
+app.use('/admin',  require('./routes/admin'));
+app.get('/', (_req, res) => res.json({ ok: true }));
+                       // ← importante
 const HOST = process.env.API_HOST || '0.0.0.0';
 const PORT = +(process.env.API_PORT || 9301);
 app.listen(PORT, HOST, () => console.log(`API listening on http://${HOST}:${PORT}`));
