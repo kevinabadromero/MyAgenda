@@ -1,0 +1,87 @@
+# -------------------
+# Global ignores
+# -------------------
+.DS_Store
+Thumbs.db
+*.log
+*.env
+*.env.local
+*.env.*.local
+.envrc
+*.pid
+*.seed
+*.backup
+*.bak
+*.swp
+
+# IDEs / editors
+.vscode/
+.idea/
+*.iml
+
+# -------------------
+# Node.js (Frontend & Backend)
+# -------------------
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+.pnpm-store/
+
+# Build output
+dist/
+build/
+.next/
+out/
+.cache/
+.astro/
+coverage/
+
+# -------------------
+# Backend extras
+# -------------------
+# TypeScript
+*.tsbuildinfo
+
+# Python (si usas Django/Flask/FastAPI en Backend)
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.sqlite3
+db.sqlite3
+*.db
+*.db-journal
+*.egg
+*.egg-info/
+.eggs/
+.mypy_cache/
+.pytest_cache/
+.pyre/
+.pytype/
+.coverage
+htmlcov/
+
+# Virtual environments
+.venv/
+env/
+venv/
+ENV/
+
+# -------------------
+# Logs / runtime
+# -------------------
+logs/
+*.log
+*.out
+*.err
+pids/
+*.pid
+*.seed
+*.pid.lock
+
+# -------------------
+# OS junk
+# -------------------
+*.orig
