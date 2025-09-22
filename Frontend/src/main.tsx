@@ -16,8 +16,41 @@ import AdminIntegrations from "./admin/AdminIntegrations";
 import NotFound from "./pages/NotFound";
 
 function RequireAuth({ children }: { children: React.ReactNode }) {
-  const token = localStorage.getItem("ma_token");
-  if (!token) {
+  // 1) migración (una vez) del token viejo
+  const old = localStorage.getItem("ma_token");
+  if (old && !localStorage.getItem("access_token")) {
+    localStorage.setItem("access_token", old);
+    localStorage.removeItem("ma_token");
+  }
+
+  const [ok, setOk] = React.useState<boolean | null>(null);
+
+  React.useEffect(() => {
+    const access = localStorage.getItem("access_token");
+    if (access) {
+      setOk(true);
+      return;
+    }
+
+    // 2) refresh silencioso si no hay access
+    fetch((import.meta as any).env?.VITE_API_BASE ?? "https://api.dappointment.com" + "/admin/refresh", {
+      method: "POST",
+      credentials: "include",
+    })
+      .then(r => r.ok ? r.json() : null)
+      .then(data => {
+        if (data?.token) {
+          localStorage.setItem("access_token", data.token);
+          setOk(true);
+        } else {
+          setOk(false);
+        }
+      })
+      .catch(() => setOk(false));
+  }, []);
+
+  if (ok === null) return null; // puedes poner un spinner aquí
+  if (!ok) {
     window.location.href = "/admin/login";
     return null;
   }

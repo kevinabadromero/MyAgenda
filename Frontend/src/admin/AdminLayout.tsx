@@ -5,7 +5,9 @@ import {setTitle} from "../lib/title";
 import {
   CalendarDays, Layers, Clock, PlugZap, LogOut, Menu, X, Copy
 } from "lucide-react";
+
 import { adminLogout } from "../lib/apiAdmin";
+import BookingLinkButton from "../components/CopyButton";
 
 const NAV = [
   { to: "/admin/bookings", icon: CalendarDays, label: "Reservas" },
@@ -59,7 +61,7 @@ export default function AdminLayout() {
   return (
     <div className="min-h-screen">
       {/* GRID principal: sidebar | contenido | right-rail */}
-      <div className="grid h-[100dvh] overflow-hidden grid-cols-1 lg:grid-cols-[84px_minmax(0,1fr)_360px]">
+      <div className="grid h-[100dvh] overflow-hidden grid-cols-1 lg:grid-cols-[84px_minmax(0,1fr)]">
 
         {/* SIDEBAR (desk) */}
         <aside className="hidden lg:flex h-full sticky top-0 bg-gradient-to-b from-[#1a2c8c] via-[#192a7a] to-[#101a58] text-white px-3 py-4 overflow-y-auto">
@@ -112,7 +114,7 @@ export default function AdminLayout() {
         </div>
 
         {/* CONTENIDO */}
-        <main className="h-full overflow-y-auto px-4 py-6 lg:px-8">
+        <main className="h-full w-full overflow-y-auto px-4 py-6 lg:px-8">
           {/* Header contenido */}
           <div className="mb-4 flex items-center justify-between gap-3">
             <div>
@@ -120,9 +122,7 @@ export default function AdminLayout() {
               <h1 className="hidden lg:block text-2xl font-semibold">{title}</h1>
             </div>
             <div className="hidden md:flex items-center gap-2">
-             <button className="btn" onClick={() => nav("/admin/bookings/new")}>
-              <Copy size={16}/> Mi enlace
-            </button> 
+            <BookingLinkButton />
             </div>
           </div>
 
@@ -132,40 +132,7 @@ export default function AdminLayout() {
           </div>
         </main>
 
-        {/* RIGHT RAIL */}
-        <aside className="hidden lg:block h-full bg-transparent p-6 overflow-y-auto">
-          <div className="space-y-4">
-            <div className="card">
-              <div className="font-medium mb-2">Notas recientes</div>
-              <ul className="space-y-3">
-                <li className="flex items-center gap-3">
-                  <img className="w-8 h-8 rounded-full" src="https://i.pravatar.cc/64?img=12"/>
-                  <div>
-                    <div className="text-sm">Revisión de agenda</div>
-                    <div className="text-xs text-slate-500">hace 10m</div>
-                  </div>
-                </li>
-                <li className="flex items-center gap-3">
-                  <img className="w-8 h-8 rounded-full" src="https://i.pravatar.cc/64?img=23"/>
-                  <div>
-                    <div className="text-sm">Actualizado disponibilidad</div>
-                    <div className="text-xs text-slate-500">ayer</div>
-                  </div>
-                </li>
-              </ul>
-            </div>
-
-            <div className="card">
-              <div className="font-medium mb-2">Atajos</div>
-              <div className="grid grid-cols-2 gap-2">
-                <Link to="/admin/bookings" className="btn">Ver agenda</Link>
-                <Link to="/admin/event-types" className="btn">Tipos</Link>
-                <Link to="/admin/availability" className="btn">Horarios</Link>
-                <Link to="/admin/integrations" className="btn">Google</Link>
-              </div>
-            </div>
-          </div>
-        </aside>
+       
 
       </div>
     </div>
