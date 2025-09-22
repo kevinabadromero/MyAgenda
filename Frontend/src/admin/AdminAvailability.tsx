@@ -78,32 +78,36 @@ export default function AdminAvailability() {
   }
 
   return (
-    <div>
-      <h1 className="text-2xl font-semibold mb-4">Disponibilidad</h1>
-      {err && <div className="alert-error mb-3">{err}</div>}
+    <div className="grid gap-4">
+      <div className="card">
+      <div>
+        <h1 className="text-2xl font-semibold mb-4">Disponibilidad</h1>
+        {err && <div className="alert-error mb-3">{err}</div>}
 
-      <div className="grid gap-3">
-        {days.map((d, idx) => (
-          <div key={d.weekday} className="card">
-            <div className="font-medium mb-2">{DAYN[d.weekday]}</div>
-            {d.ranges.map((r, ridx) => (
-              <div key={ridx} className="flex items-center gap-2 mb-2">
-                <input className="input" type="time" value={toHHMM(r.start_min)} onChange={e=>setRange(idx, ridx, 'start_min', e.target.value)} />
-                <span>—</span>
-                <input className="input" type="time" value={toHHMM(r.end_min)} onChange={e=>setRange(idx, ridx, 'end_min', e.target.value)} />
-                <button className="btn" onClick={()=>delRange(idx, ridx)}>Eliminar</button>
-              </div>
-            ))}
-            <button className="btn" onClick={()=>addRange(idx)}>+ Añadir franja</button>
-          </div>
-        ))}
-      </div>
+        <div className="grid gap-3">
+          {days.map((d, idx) => (
+            <div key={d.weekday} className="card">
+              <div className="font-medium mb-2">{DAYN[d.weekday]}</div>
+              {d.ranges.map((r, ridx) => (
+                <div key={ridx} className="flex items-center gap-2 mb-2">
+                  <input className="input" type="time" value={toHHMM(r.start_min)} onChange={e=>setRange(idx, ridx, 'start_min', e.target.value)} />
+                  <span>—</span>
+                  <input className="input" type="time" value={toHHMM(r.end_min)} onChange={e=>setRange(idx, ridx, 'end_min', e.target.value)} />
+                  <button className="btn" onClick={()=>delRange(idx, ridx)}>Eliminar</button>
+                </div>
+              ))}
+              <button className="btn" onClick={()=>addRange(idx)}>+ Añadir franja</button>
+            </div>
+          ))}
+        </div>
 
-      <div className="mt-4">
-        <button className="btn btn-primary" onClick={save} disabled={saving}>
-          {saving ? "Guardando…" : "Guardar disponibilidad"}
-        </button>
+        <div className="mt-4">
+          <button className="btn btn-primary" onClick={save} disabled={saving}>
+            {saving ? "Guardando…" : "Guardar disponibilidad"}
+          </button>
+        </div>
       </div>
+    </div>
     </div>
   );
 }

@@ -7,6 +7,6 @@ export default defineConfig({
   server: {
     host: true,        // equivale a 0.0.0.0
     port: 5353,
-    allowedHosts: ['agenda.auraux.dev']
+    allowedHosts: ['booking.dappointment.com']
   } 
 })

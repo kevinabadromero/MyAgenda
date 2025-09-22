@@ -12,6 +12,7 @@ import AdminBookings from "./admin/AdminBookings";
 import AdminLayout from "./admin/AdminLayout";
 import AdminEventTypes from "./admin/AdminEventTypes";
 import AdminAvailability from "./admin/AdminAvailability";
+import AdminIntegrations from "./admin/AdminIntegrations";
 import NotFound from "./pages/NotFound";
 
 function RequireAuth({ children }: { children: React.ReactNode }) {
@@ -31,16 +32,14 @@ const router = createBrowserRouter([
   { path: "/admin/login", element: <AdminLogin /> },
   {
     path: "/admin",
-    element: (
-      <RequireAuth>
-        <AdminLayout />
-      </RequireAuth>
-    ),
+    element: <RequireAuth><AdminLayout /></RequireAuth>,
     children: [
-      { index: true, element: <AdminBookings /> },         
+      { index: true, element: <AdminBookings /> },
       { path: "bookings", element: <AdminBookings /> },
+      { path: "bookings/new", element: <AdminBookings /> },
       { path: "event-types", element: <AdminEventTypes /> },
       { path: "availability", element: <AdminAvailability /> },
+      { path: "integrations", element: <AdminIntegrations /> },  // ← nueva
     ],
   },
 

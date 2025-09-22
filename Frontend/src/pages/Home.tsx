@@ -2,7 +2,13 @@ import { useEffect, useMemo, useState } from "react";
 import { useParams, useNavigate, Link } from "react-router-dom";
 import { getSlots, createBooking } from "../lib/api";
 import type { Slot } from "../types";
+import { getProfile } from "../lib/api"; // tu api.ts público
+import { setTitle, prettifySlug } from "../lib/title";
 
+function getUFromURL() {
+  const u = new URLSearchParams(window.location.search).get("u");
+  return (u || "").trim().toLowerCase();
+}
 // Helpers sin dependencias
 const toYMD = (d: Date) => {
   const y = d.getUTCFullYear();
@@ -22,6 +28,7 @@ const addDays = (s: string, n: number) => {
 };
 
 export default function Booking() {
+
   const { eventType = "" } = useParams();
   const nav = useNavigate();
 
@@ -37,7 +44,17 @@ export default function Booking() {
   const [formError, setFormError] = useState<string>();
 
   const title = useMemo(() => eventType.replace(/-/g, " "), [eventType]);
+  const [done, setDone] = useState(false);
 
+  useEffect(() => {
+    const u = getUFromURL();
+    if (!u) { setTitle("Dapp"); setDone(true); return; }
+
+    getProfile()
+      .then(p => { setTitle(p.name || prettifySlug(u)); })
+      .catch(() => { setTitle(prettifySlug(u)); })
+      .finally(() => setDone(true));
+  }, []);
   async function load() {
     if (!eventType) return;
     setLoading(true);

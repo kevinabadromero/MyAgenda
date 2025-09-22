@@ -1,25 +1,173 @@
-import { Outlet, Link, useLocation, useNavigate } from "react-router-dom";
+import { Outlet, NavLink, Link, useLocation, useNavigate } from "react-router-dom";
+import { useState, useMemo, useEffect, useRef } from "react";
+import { getThemeColor, setThemeColor } from "../lib/themeColor"; // ajusta ruta
+import {setTitle} from "../lib/title";
+import {
+  CalendarDays, Layers, Clock, PlugZap, LogOut, Menu, X, Copy
+} from "lucide-react";
 import { adminLogout } from "../lib/apiAdmin";
 
+const NAV = [
+  { to: "/admin/bookings", icon: CalendarDays, label: "Reservas" },
+  { to: "/admin/event-types", icon: Layers, label: "Tipos de evento" },
+  { to: "/admin/availability", icon: Clock, label: "Disponibilidad" },
+  { to: "/admin/integrations", icon: PlugZap, label: "Ajustes" },
+];
+// pill helper
+function NavItem({ to, icon: Icon, label }: any) {
+  useEffect(() => {
+    setTitle("Dapp: Dashboard");
+  }, []);
+  return (
+    <NavLink
+      to={to}
+      className={({ isActive }) =>
+        `flex   items-center justify-center gap-3 px-3 lg:px-0 py-2 rounded-xl text-sm ${
+          isActive ? "bg-white/15 text-white" : "text-white/80 hover:text-white"
+        }`
+      }
+    >
+      <Icon size={18} className={'hover:bg-white/10 pill '} /> <span className="hidden lg:hidden">{label}</span>
+    </NavLink>
+  );
+}
+
 export default function AdminLayout() {
-  const loc = useLocation();
   const nav = useNavigate();
-  const active = (p: string) => (loc.pathname.startsWith(p) ? "font-semibold" : "text-gray-600");
+
+  const [open, setOpen] = useState(false);
+  const loc = useLocation();
+  const prevColor = useRef<string | null>(null);
+
+  useEffect(() => {
+    // color para cuando el menú está abierto (combina con tu backdrop oscuro)
+    const OPEN_COLOR = '#000'; // puedes poner el que combine con tu overlay
+
+    if (open) {
+      if (!prevColor.current) prevColor.current = getThemeColor();
+      setThemeColor(OPEN_COLOR);
+    } else if (prevColor.current) {
+      setThemeColor(prevColor.current);
+      prevColor.current = null;
+    }
+  }, [open]);
+  const title = useMemo(() => {
+    const item = NAV.find(n => loc.pathname.startsWith(n.to));
+    return item ? item.label : "Panel";
+  }, [loc.pathname]);
 
   return (
-    <div className="flex min-h-screen">
-      <aside className="w-56 p-4 border-r bg-white">
-        <h2 className="text-xl mb-4">Admin</h2>
-        <nav className="grid gap-2 text-sm">
-            <Link className={active("/admin/bookings")} to="/admin/bookings">Reservas</Link>
-            <Link className={active("/admin/event-types")} to="/admin/event-types">Tipos de evento</Link>
-            <Link className={active("/admin/availability")} to="/admin/availability">Disponibilidad</Link>
-            <button className="btn mt-4" onClick={() => { adminLogout(); nav("/admin/login"); }}>Salir</button>
-        </nav>
-      </aside>
-      <main className="flex-1 p-6">
-        <Outlet />
-      </main>
+    <div className="min-h-screen">
+      {/* GRID principal: sidebar | contenido | right-rail */}
+      <div className="grid h-[100dvh] overflow-hidden grid-cols-1 lg:grid-cols-[84px_minmax(0,1fr)_360px]">
+
+        {/* SIDEBAR (desk) */}
+        <aside className="hidden lg:flex h-full sticky top-0 bg-gradient-to-b from-[#1a2c8c] via-[#192a7a] to-[#101a58] text-white px-3 py-4 overflow-y-auto">
+          <div className="flex flex-col w-full items-center gap-3">
+            {/* logo */}
+            <Link to="/admin/bookings" className="mb-4 mt-1">
+              <div className="w-10 h-10 rounded-xl bg-white/10 grid place-items-center font-semibold">MA</div>
+            </Link>
+
+            {/* nav vertical (solo iconos en lg, texto en xl) */}
+            <nav className="flex-1 w-full grid gap-2">
+              {NAV.filter(n => !n.hidden).map(n => (
+                <NavItem key={n.to} {...n} />
+              ))}
+            </nav>
+
+            <button className="icon-btn mb-2" onClick={() => { adminLogout(); window.location.href = "/admin/login"; }}>
+              <LogOut size={18} />
+            </button>
+          </div>
+        </aside>
+
+        {/* SIDEBAR (mobile drawer) */}
+        <div className={open&&"bg-indigo-500"|| "lg:hidden"}>
+          <div className="sticky top-0 z-30  shadow-soft px-3 py-2 flex items-center justify-between">
+            <button className="btn bg-transparent" onClick={() => setOpen(v => !v)}>
+              {open ? <X size={18}/> : <Menu size={18}/>}
+            </button>
+            <div className={open ? "text-white":"font-semibold text-black"}>{title}</div>
+            <div className="w-9" />
+          </div>
+          {open && (
+            <div className="px-3 py-2 pb-5 border-b-5 border-b-indigo-500 text-white">
+              <nav className="grid gap-2">
+                {NAV.filter(n => !n.hidden).map(n => (
+                  <NavLink key={n.to} to={n.to} onClick={()=>setOpen(false)}
+                    className={({isActive}) =>
+                      `px-3 py-3 rounded-xl ${isActive ? "bg-white/15" : "hover:bg-white/10"}`
+                    }>
+                    {n.label}
+                  </NavLink>
+                ))}
+                <button
+                  className="mt-2 px-3 py-3 rounded-xl bg-white/10 hover:bg-white/20 text-left"
+                  onClick={() => { adminLogout(); window.location.href = "/admin/login"; }}
+                >Salir</button>
+              </nav>
+            </div>
+          )}
+        </div>
+
+        {/* CONTENIDO */}
+        <main className="h-full overflow-y-auto px-4 py-6 lg:px-8">
+          {/* Header contenido */}
+          <div className="mb-4 flex items-center justify-between gap-3">
+            <div>
+              <div className="hidden lg:block text-xs text-slate-500">Hoy</div>
+              <h1 className="hidden lg:block text-2xl font-semibold">{title}</h1>
+            </div>
+            <div className="hidden md:flex items-center gap-2">
+             <button className="btn" onClick={() => nav("/admin/bookings/new")}>
+              <Copy size={16}/> Mi enlace
+            </button> 
+            </div>
+          </div>
+
+          {/* Slot del enrutador */}
+          <div className="grid gap-6">
+            <Outlet />
+          </div>
+        </main>
+
+        {/* RIGHT RAIL */}
+        <aside className="hidden lg:block h-full bg-transparent p-6 overflow-y-auto">
+          <div className="space-y-4">
+            <div className="card">
+              <div className="font-medium mb-2">Notas recientes</div>
+              <ul className="space-y-3">
+                <li className="flex items-center gap-3">
+                  <img className="w-8 h-8 rounded-full" src="https://i.pravatar.cc/64?img=12"/>
+                  <div>
+                    <div className="text-sm">Revisión de agenda</div>
+                    <div className="text-xs text-slate-500">hace 10m</div>
+                  </div>
+                </li>
+                <li className="flex items-center gap-3">
+                  <img className="w-8 h-8 rounded-full" src="https://i.pravatar.cc/64?img=23"/>
+                  <div>
+                    <div className="text-sm">Actualizado disponibilidad</div>
+                    <div className="text-xs text-slate-500">ayer</div>
+                  </div>
+                </li>
+              </ul>
+            </div>
+
+            <div className="card">
+              <div className="font-medium mb-2">Atajos</div>
+              <div className="grid grid-cols-2 gap-2">
+                <Link to="/admin/bookings" className="btn">Ver agenda</Link>
+                <Link to="/admin/event-types" className="btn">Tipos</Link>
+                <Link to="/admin/availability" className="btn">Horarios</Link>
+                <Link to="/admin/integrations" className="btn">Google</Link>
+              </div>
+            </div>
+          </div>
+        </aside>
+
+      </div>
     </div>
   );
 }
