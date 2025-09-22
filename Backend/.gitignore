@@ -27,3 +27,8 @@ dist-ssr
 *.env.local
 *.env.*.local
 .envrc
+# Entornos
+*.env
+*.env.local
+*.env.*.local
+.env
