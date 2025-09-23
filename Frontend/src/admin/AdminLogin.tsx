@@ -6,7 +6,6 @@ export default function AdminLogin() {
   const nav = useNavigate();
   const [email, setEmail] = useState("");
   const [pass, setPass] = useState("");
-  const [u, setU] = useState(""); // opcional (slug/tenant), deja vacío si no lo usas
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState<string>();
 

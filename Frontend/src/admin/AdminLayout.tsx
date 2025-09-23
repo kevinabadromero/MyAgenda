@@ -1,9 +1,9 @@
-import { Outlet, NavLink, Link, useLocation, useNavigate } from "react-router-dom";
+import { Outlet, NavLink, Link, useLocation} from "react-router-dom";
 import { useState, useMemo, useEffect, useRef } from "react";
 import { getThemeColor, setThemeColor } from "../lib/themeColor"; // ajusta ruta
 import {setTitle} from "../lib/title";
 import {
-  CalendarDays, Layers, Clock, PlugZap, LogOut, Menu, X, Copy
+  CalendarDays, Layers, Clock, PlugZap, LogOut, Menu, X
 } from "lucide-react";
 
 import { adminLogout } from "../lib/apiAdmin";
@@ -35,7 +35,7 @@ function NavItem({ to, icon: Icon, label }: any) {
 }
 
 export default function AdminLayout() {
-  const nav = useNavigate();
+
 
   const [open, setOpen] = useState(false);
   const loc = useLocation();
@@ -73,7 +73,7 @@ export default function AdminLayout() {
 
             {/* nav vertical (solo iconos en lg, texto en xl) */}
             <nav className="flex-1 w-full grid gap-2">
-              {NAV.filter(n => !n.hidden).map(n => (
+              {NAV.map(n => (
                 <NavItem key={n.to} {...n} />
               ))}
             </nav>
@@ -96,7 +96,7 @@ export default function AdminLayout() {
           {open && (
             <div className="px-3 py-2 pb-5 border-b-5 border-b-indigo-500 text-white">
               <nav className="grid gap-2">
-                {NAV.filter(n => !n.hidden).map(n => (
+                {NAV.map(n => (
                   <NavLink key={n.to} to={n.to} onClick={()=>setOpen(false)}
                     className={({isActive}) =>
                       `px-3 py-3 rounded-xl ${isActive ? "bg-white/15" : "hover:bg-white/10"}`
