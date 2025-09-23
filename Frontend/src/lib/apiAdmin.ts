@@ -1,6 +1,7 @@
-// src/lib/apiAdmin.ts
+// ====== CONFIG ======
 const API_BASE = import.meta.env.VITE_API_BASE || "https://api.dappointment.com";
-// ====== token storage (access) ======
+
+// ====== ACCESS TOKEN storage (access_token) ======
 function __getAccess(): string {
   try { return localStorage.getItem("access_token") || ""; } catch { return ""; }
 }
@@ -11,113 +12,60 @@ function __clearAccess() {
   try { localStorage.removeItem("access_token"); } catch {}
 }
 
-// úsalo donde ya lo tengas (no cambia el nombre externo si ya existe)
-export function authHeaders() {
+function authHeaders() {
   const t = __getAccess();
   return t ? { Authorization: `Bearer ${t}` } : {};
 }
 
-// ====== refresh flow ======
+// ====== REFRESH (mutex para evitar múltiples refrescos simultáneos) ======
+let refreshPromise: Promise<boolean> | null = null;
+
 async function __tryRefresh(): Promise<boolean> {
-  const r = await fetch(`${API_BASE}/admin/refresh`, {
-    method: "POST",
-    credentials: "include", // para que viaje la cookie HttpOnly
-  });
-  if (!r.ok) return false;
-  const data = await r.json().catch(() => null);
-  if (!data?.token) return false;
-  __setAccess(data.token);
-  return true;
+  if (refreshPromise) return refreshPromise;
+  refreshPromise = (async () => {
+    const r = await fetch(`${API_BASE}/admin/refresh`, {
+      method: "POST",
+      credentials: "include", // cookie HttpOnly
+    });
+    if (!r.ok) return false;
+
+    let data: any = null;
+    try { data = await r.json(); } catch { data = null; } // tolera 204/body vacío
+
+    if (data?.token) { __setAccess(data.token); return true; }
+    return false;
+  })();
+
+  try { return await refreshPromise; }
+  finally { refreshPromise = null; }
 }
 
-// ====== reemplaza TUS helpers con estos (mismos nombres) ======
+// ====== HELPERS con reintento tras 401 ======
 export async function getJSON<T>(path: string): Promise<T> {
-  // 1er intento con el access actual
-  let r = await fetch(`${API_BASE}${path}`, {
-    mode: "cors",
-    headers: { ...authHeaders() },
-    credentials: "include", // inofensivo; útil si el server necesita cookie
-  });
-  // si no es 401, procede normal
-  if (r.status !== 401) {
-    if (!r.ok) throw new Error(String(r.status));
-    return r.json();
-  }
-
-  // 401: intentamos refrescar y reintentar UNA sola vez
-  const refreshed = await __tryRefresh();
-  if (!refreshed) {
-    throw new Error("401 unauthorized");
-  }
-
-  r = await fetch(`${API_BASE}${path}`, {
+  const doFetch = () => fetch(`${API_BASE}${path}`, {
     mode: "cors",
     headers: { ...authHeaders() },
     credentials: "include",
   });
+
+  let r = await doFetch();
+  if (r.status === 401 && (await __tryRefresh())) r = await doFetch();
   if (!r.ok) throw new Error(String(r.status));
   return r.json();
 }
 
-export async function sendJSON<T>(
-  path: string,
-  method: string,
-  body?: unknown
-): Promise<T> {
-  // 1er intento
-  let r = await fetch(`${API_BASE}${path}`, {
+export async function sendJSON<T>(path: string, method: string, body?: unknown): Promise<T> {
+  const doFetch = () => fetch(`${API_BASE}${path}`, {
     mode: "cors",
     method,
     headers: { "Content-Type": "application/json", ...authHeaders() },
     body: body ? JSON.stringify(body) : undefined,
     credentials: "include",
   });
-
-  if (r.status !== 401) {
-    if (!r.ok) {
-      const t = await r.text().catch(() => "");
-      throw new Error(`${r.status} ${t}`);
-    }
-    return r.json();
-  }
-
-  // 401: refresh + reintento
-  const refreshed = await __tryRefresh();
-  if (!refreshed) {
-    const t = await r.text().catch(() => "");
-    throw new Error(`401 ${t || "unauthorized"}`);
-  }
-
-  r = await fetch(`${API_BASE}${path}`, {
-    mode: "cors",
-    method,
-    headers: { "Content-Type": "application/json", ...authHeaders() },
-    body: body ? JSON.stringify(body) : undefined,
-    credentials: "include",
-  });
-
-  if (!r.ok) {
-    const t = await r.text().catch(() => "");
-    throw new Error(`${r.status} ${t}`);
-  }
-  return r.json();
-}
-
-
-async function sendFORM<T>(path: string, form: FormData, method = "POST"): Promise<T> {
-  const headers: Record<string, string> = { ...authHeaders() } as any;
-  // ¡No pongas Content-Type aquí! fetch lo setea con el boundary correcto.
-  const doFetch = () =>
-    fetch(`${API_BASE}${path}`, {
-      mode: "cors",
-      method,
-      headers,
-      body: form,
-      credentials: "include",
-    });
 
   let r = await doFetch();
   if (r.status === 401 && (await __tryRefresh())) r = await doFetch();
+
   if (!r.ok) {
     const t = await r.text().catch(() => "");
     throw new Error(`${r.status} ${t}`);
@@ -125,24 +73,36 @@ async function sendFORM<T>(path: string, form: FormData, method = "POST"): Promi
   return r.json();
 }
 
-export async function adminLogin(params: { email: string; password: string; }) {
-  // POST /admin/login con sendJSON
-  const body = await sendJSON<{ token?: string; owner: any }>("/admin/login", "POST", params);
-  
-  if (body?.token) __setAccess(body.token); // guarda el access token
-  console.log(body.token);
-  return body; // { token, owner: {...} }
-}
+// (opcional) multipart para subir avatar u otros archivos
+export async function sendFORM<T>(path: string, form: FormData, method = "POST"): Promise<T> {
+  const doFetch = () => fetch(`${API_BASE}${path}`, {
+    mode: "cors",
+    method,
+    headers: { ...authHeaders() }, // NO setear Content-Type
+    body: form,
+    credentials: "include",
+  });
 
-export async function adminLogout() {
-  try {
-    // POST /admin/logout con sendJSON
-    await sendJSON<{ ok: true }>("/admin/logout", "POST");
-  } finally {
-    __clearAccess(); // limpia el access token local
+  let r = await doFetch();
+  if (r.status === 401 && (await __tryRefresh())) r = await doFetch();
+
+  if (!r.ok) {
+    const t = await r.text().catch(() => "");
+    throw new Error(`${r.status} ${t}`);
   }
+  return r.json();
 }
 
+// ====== usa estos en login/logout ======
+export async function adminLogin(params: { email: string; password: string; u?: string }) {
+  const out = await sendJSON<{ token?: string; owner: any }>(`/admin/login`, "POST", params);
+  if (out?.token) __setAccess(out.token);
+  return out;
+}
+export async function adminLogout() {
+  try { await sendJSON(`/admin/logout`, "POST"); }
+  finally { __clearAccess(); }
+}
 export async function adminMe() { return getJSON("/admin/me"); }
 
 // === Availability ===
@@ -239,13 +199,9 @@ export async function adminGoogleSaveSettings(calendarId: string, syncEnabled: b
 }
 
 export async function adminGetProfile() {
-  return getJSON<{ email: string; name?: string; avatarUrl?: string }>(`/admin/profile`);
+  return getJSON<{ email: string; name?: string; avatarUrl?: string }>("/admin/profile");
 }
-
-// Nueva: subir avatar
 export async function adminUploadAvatar(file: File) {
-  const form = new FormData();
-  form.append("file", file);
-  // opcional: form.append("crop", "..."); etc.
-  return sendFORM<{ avatarUrl: string }>(`/admin/profile/avatar`, form, "POST");
+  const form = new FormData(); form.append("file", file);
+  return sendFORM<{ avatarUrl: string }>("/admin/profile/avatar", form, "POST");
 }

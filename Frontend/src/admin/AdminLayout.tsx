@@ -1,6 +1,7 @@
 import { Outlet, NavLink, Link, useLocation} from "react-router-dom";
 import { useState, useMemo, useEffect, useRef } from "react";
 import { getThemeColor, setThemeColor } from "../lib/themeColor"; // ajusta ruta
+import { adminGetProfile } from "../lib/apiAdmin";
 import {setTitle} from "../lib/title";
 import {
   CalendarDays, Layers, Clock, PlugZap, LogOut, Menu, X
@@ -16,7 +17,13 @@ const NAV = [
   { to: "/admin/integrations", icon: PlugZap, label: "Ajustes" },
 ];
 // pill helper
+
+
+
 function NavItem({ to, icon: Icon, label }: any) {
+
+  
+
   useEffect(() => {
     setTitle("Dapp: Dashboard");
   }, []);
@@ -36,7 +43,47 @@ function NavItem({ to, icon: Icon, label }: any) {
 
 export default function AdminLayout() {
 
-
+  function AvatarCircleView() {
+    const [avatarUrl, setAvatarUrl] = useState<string | undefined>();
+    const [nameEmail, setNameEmail] = useState<string>("MA");
+  
+    useEffect(() => {
+      (async () => {
+        try {
+          const p = await adminGetProfile();
+          setAvatarUrl(p.avatarUrl);
+          setNameEmail(p.name || p.email || "MA");
+        } catch { /* no-op */ }
+      })();
+    }, []);
+  
+    const initials = useMemo(() => {
+      return (nameEmail || "MA")
+        .split(/[^\p{L}\p{N}]+/u)
+        .filter(Boolean)
+        .slice(0, 2)
+        .map((s) => s[0]!.toUpperCase())
+        .join(" ");
+    }, [nameEmail]);
+  
+    return (
+      <div
+        className="h-10 w-10 rounded-xl flex items-center justify-center bg-indigo-700 overflow-hidden select-none"
+        title={nameEmail}
+      >
+        {avatarUrl ? (
+          <img
+            src={avatarUrl}
+            alt="avatar"
+            className="h-full w-full object-cover"
+            onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = "none"; }}
+          />
+        ) : (
+          <span className="text-white font-semibold text-sm">{initials}</span>
+        )}
+      </div>
+    );
+  }
   const [open, setOpen] = useState(false);
   const loc = useLocation();
   const prevColor = useRef<string | null>(null);
@@ -68,7 +115,7 @@ export default function AdminLayout() {
           <div className="flex flex-col w-full items-center gap-3">
             {/* logo */}
             <Link to="/admin/bookings" className="mb-4 mt-1">
-              <div className="w-10 h-10 rounded-xl bg-white/10 grid place-items-center font-semibold">MA</div>
+              <AvatarCircleView />
             </Link>
 
             {/* nav vertical (solo iconos en lg, texto en xl) */}
