@@ -3,6 +3,7 @@ import { useState, useMemo, useEffect, useRef } from "react";
 import { getThemeColor, setThemeColor } from "../lib/themeColor"; // ajusta ruta
 import { adminGetProfile } from "../lib/apiAdmin";
 import {setTitle} from "../lib/title";
+import { API_BASE } from "../config";
 import {
   CalendarDays, Layers, Clock, PlugZap, LogOut, Menu, X
 } from "lucide-react";
@@ -51,9 +52,13 @@ export default function AdminLayout() {
       (async () => {
         try {
           const p = await adminGetProfile();
-          setAvatarUrl(p.avatarUrl);
+          console.log(p);
+          const url = p.avatarUrl && p.avatarUrl.startsWith("/")
+            ? `${API_BASE}${p.avatarUrl}`
+            : p.avatarUrl;
+          setAvatarUrl(url);
           setNameEmail(p.name || p.email || "MA");
-        } catch { /* no-op */ }
+        } catch {}
       })();
     }, []);
   
@@ -68,7 +73,7 @@ export default function AdminLayout() {
   
     return (
       <div
-        className="h-10 w-10 rounded-xl flex items-center justify-center bg-indigo-700 overflow-hidden select-none"
+        className="h-15 w-15 rounded-full flex items-center justify-center bg-white overflow-hidden select-none"
         title={nameEmail}
       >
         {avatarUrl ? (

@@ -575,16 +575,6 @@ r.delete('/google/disconnect', requireAuth, async (req, res) => {
   finally { conn.release(); }
 });
 
-r.get('/profile', requireAuth, async (req, res) => {
-  const conn = await pool.getConnection();
-  try {
-    const owner = await getOwnerById(conn, req.auth.uid);
-    if (!owner) return res.status(404).json({ error:'owner_not_found' });
-    const [rows] = await conn.execute(`SELECT email FROM users WHERE id=? LIMIT 1`, [owner.id]);
-    if (!rows.length) return res.status(404).json({ error:'not_found' });
-    res.json({ email: rows[0].email });
-  } finally { conn.release(); }
-});
 
 r.put('/profile/email', requireAuth, async (req, res) => {
   const { email } = req.body || {};
@@ -639,12 +629,22 @@ r.post('/profile/avatar', requireAuth, upload.single('file'), async (req, res) =
 });
 
 r.get('/profile', requireAuth, async (req, res) => {
+  // no cachear el perfil
+  res.set('Cache-Control', 'no-store');
+  res.set('Vary', 'Authorization');
+
   const [rows] = await pool.execute(
-    `SELECT email, name, avatar_url AS avatarUrl FROM users WHERE id=? LIMIT 1`,
+    'SELECT email, name, avatar_url AS avatarUrl FROM users WHERE id=? LIMIT 1',
     [req.auth.uid]
   );
   if (!rows.length) return res.status(404).json({ error: 'not_found' });
-  res.json(rows[0]);
-});
 
+  const BASE = process.env.PUBLIC_API_BASE || 'https://api.dappointment.com';
+  const out = rows[0];
+  if (out.avatarUrl && !/^https?:\/\//i.test(out.avatarUrl)) {
+    out.avatarUrl = `${BASE}${out.avatarUrl}`;   // ← vuelve absoluta si venía "/avatars/..."
+  }
+
+  res.json(out);
+});
 module.exports = r;

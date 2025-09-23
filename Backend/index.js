@@ -1,6 +1,6 @@
 require('dotenv').config();
 const express = require('express');
-
+const path = require('path');
 const morgan = require('morgan');
 const { oauthClient, SCOPES, saveTokens } = require('./lib/google');
 
@@ -9,10 +9,25 @@ const cookieParser = require('cookie-parser');
 app.use(cookieParser());
 app.set('trust proxy', true);
 app.use(express.json());
+app.set('etag', false);
 app.use(morgan('tiny'));
 app.use(express.urlencoded({ extended: true }));
 
 // Rutas
+app.use('/avatars', express.static(
+  path.join(__dirname, 'public', 'avatars'),
+  {
+    maxAge: '365d',
+    immutable: true,
+    dotfiles: 'deny',
+    // seguridad extra: no hace falta, pero puedes limitar tipos si quieres
+    setHeaders: (res, filePath) => {
+      res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+      // Si tu front está en otro dominio y quieres habilitar uso en <canvas>:
+      // res.setHeader('Access-Control-Allow-Origin', 'https://booking.dappointment.com');
+    },
+  }
+));
 app.use('/public', require('./routes/public'));
 app.use('/admin',  require('./routes/admin'));
 app.get('/oauth/google/callback', async (req,res)=>{

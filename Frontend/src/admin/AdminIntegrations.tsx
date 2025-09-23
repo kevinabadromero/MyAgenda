@@ -1,10 +1,11 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useMemo } from "react";
 import {
   adminGoogleStatus, adminGoogleAuthUrl, adminGoogleDisconnect,
   adminGoogleCalendars, adminGoogleSaveSettings,
   adminGetProfile, adminUpdateEmail, adminChangePassword,
+  adminUploadAvatar
 } from "../lib/apiAdmin";
-
+import ChangeAvatarModal from "../components/ChangeAvatarModal";
 /** Pequeño helper para mensajes */
 function useFlash() {
   const [msg, setMsg] = useState<string | null>(null);
@@ -15,6 +16,56 @@ function useFlash() {
 }
 
 export default function AdminIntegrations() {
+
+  const [avatarUrl, setAvatarUrl] = useState<string | undefined>();
+  const [nameEmail, setNameEmail] = useState<string>("MA");
+
+  // modal state
+  const [open, setOpen] = useState(false);
+  const [file, setFile] = useState<File | null>(null);
+  const [preview, setPreview] = useState<string>("");
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const p = await adminGetProfile();
+        setAvatarUrl(p.avatarUrl);
+        setNameEmail(p.name || p.email || "MA");
+      } catch {}
+    })();
+  }, []);
+
+  useEffect(() => {
+    if (!file) { setPreview(""); return; }
+    const url = URL.createObjectURL(file);
+    setPreview(url);
+    return () => URL.revokeObjectURL(url);
+  }, [file]);
+
+  const initials = useMemo(() => {
+    return (nameEmail || "MA")
+      .split(/[^\p{L}\p{N}]+/u).filter(Boolean).slice(0,2)
+      .map(s => s[0]!.toUpperCase()).join(" ");
+  }, [nameEmail]);
+
+  async function onSaveAvatar() {
+    if (!file) return;
+    setBusy(true);
+    try {
+      const { avatarUrl: url } = await adminUploadAvatar(file);
+      setAvatarUrl(url);
+      setOpen(false);
+      setFile(null);
+      setPreview("");
+      // notifica a AdminLayout para refrescar el nav
+      window.dispatchEvent(new CustomEvent("avatar:updated", { detail: url }));
+    } catch {
+      alert("No se pudo subir la imagen");
+    } finally {
+      setBusy(false);
+    }
+  }
   // ---- Google ----
   const [status, setStatus] = useState<{connected:boolean; calendarId:string; syncEnabled:boolean}>();
   const [loading, setLoading] = useState(true);
@@ -245,6 +296,40 @@ export default function AdminIntegrations() {
           </form>
         </div>
       </div>
+      {/* Foto de perfil */}
+      <div className="mt-6 rounded-2xl border p-4">
+        <h3 className="font-semibold mb-2">Foto de perfil</h3>
+        <div className="flex items-center gap-4">
+          {avatarUrl ? (
+            <img
+              src={avatarUrl}
+              alt="avatar"
+              className="h-12 w-12 rounded-full object-cover"
+              onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = "none"; }}
+            />
+          ) : (
+            <div className="h-12 w-12 rounded-full bg-gray-200 flex items-center justify-center text-sm font-semibold text-gray-700">
+              {initials}
+            </div>
+          )}
+
+          <button
+            className="px-3 py-2 rounded-lg bg-indigo-600 text-white"
+            onClick={() => setOpen(true)}
+          >
+            Cambiar foto…
+          </button>
+        </div>
+      </div>
+
+      {/* Modal embebido (usa tu componente) */}
+      {open && (
+        <ChangeAvatarModal
+          open={open}
+          onClose={() => { setOpen(false); setFile(null); setPreview(""); }}
+          onUploaded={(url) => { setAvatarUrl(url); window.dispatchEvent(new CustomEvent("avatar:updated", { detail: url })); }}
+        />
+      )}
     </div>
   );
 }
