@@ -103,6 +103,28 @@ export async function sendJSON<T>(
   return r.json();
 }
 
+
+async function sendFORM<T>(path: string, form: FormData, method = "POST"): Promise<T> {
+  const headers: Record<string, string> = { ...authHeaders() } as any;
+  // ¡No pongas Content-Type aquí! fetch lo setea con el boundary correcto.
+  const doFetch = () =>
+    fetch(`${API_BASE}${path}`, {
+      mode: "cors",
+      method,
+      headers,
+      body: form,
+      credentials: "include",
+    });
+
+  let r = await doFetch();
+  if (r.status === 401 && (await __tryRefresh())) r = await doFetch();
+  if (!r.ok) {
+    const t = await r.text().catch(() => "");
+    throw new Error(`${r.status} ${t}`);
+  }
+  return r.json();
+}
+
 export async function adminLogin(params: { email: string; password: string; }) {
   // POST /admin/login con sendJSON
   const body = await sendJSON<{ token?: string; owner: any }>("/admin/login", "POST", params);
@@ -193,7 +215,7 @@ export async function adminDeleteEventType(id: string) {
 }
 
 // === Profile / Security ===
-export async function adminGetProfile() { return getJSON<{ email: string }>(`/admin/profile`); }
+
 export async function adminUpdateEmail(email: string) { return sendJSON(`/admin/profile/email`, "PUT", { email }); }
 export async function adminChangePassword(currentPassword: string, newPassword: string) {
   return sendJSON(`/admin/profile/password`, "PUT", { currentPassword, newPassword });
@@ -214,4 +236,16 @@ export async function adminGoogleCalendars() {
 }
 export async function adminGoogleSaveSettings(calendarId: string, syncEnabled: boolean) {
   return sendJSON(`/admin/google/settings`, "POST", { calendarId, syncEnabled });
+}
+
+export async function adminGetProfile() {
+  return getJSON<{ email: string; name?: string; avatarUrl?: string }>(`/admin/profile`);
+}
+
+// Nueva: subir avatar
+export async function adminUploadAvatar(file: File) {
+  const form = new FormData();
+  form.append("file", file);
+  // opcional: form.append("crop", "..."); etc.
+  return sendFORM<{ avatarUrl: string }>(`/admin/profile/avatar`, form, "POST");
 }

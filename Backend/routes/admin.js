@@ -5,7 +5,16 @@ const bcrypt = require('bcryptjs');
 const crypto = require('crypto');
 const { pool } = require('../db');
 const { DateTime } = require("luxon");
-
+const multer = require('multer');
+const path = require('path');
+const fs = require('fs');
+const upload = multer({
+  limits: { fileSize: 3 * 1024 * 1024 },
+  fileFilter: (_req, file, cb) => {
+    if (!/^image\/(png|jpe?g|webp|gif)$/.test(file.mimetype)) return cb(new Error('bad_type'));
+    cb(null, true);
+  }
+});
 // Auth helpers (Access + Refresh)
 const {
   requireAuth,
@@ -609,6 +618,33 @@ r.put('/profile/password', requireAuth, async (req, res) => {
 
     res.json({ ok:true });
   } finally { conn.release(); }
+});
+
+r.post('/profile/avatar', requireAuth, upload.single('file'), async (req, res) => {
+  if (!req.file) return res.status(400).json({ error: 'no_file' });
+
+  const ext = path.extname(req.file.originalname || '.jpg').toLowerCase() || '.jpg';
+  const dir = path.join(__dirname, '..', 'public', 'avatars'); // asegúrate de servir /public
+  fs.mkdirSync(dir, { recursive: true });
+
+  const filename = `u${req.auth.uid}-${Date.now()}${ext}`;
+  const full = path.join(dir, filename);
+  fs.writeFileSync(full, req.file.buffer);
+
+  const avatarUrl = `/avatars/${filename}`;
+  // persiste en DB
+  await pool.execute(`UPDATE users SET avatar_url=? WHERE id=?`, [avatarUrl, req.auth.uid]);
+
+  res.json({ avatarUrl });
+});
+
+r.get('/profile', requireAuth, async (req, res) => {
+  const [rows] = await pool.execute(
+    `SELECT email, name, avatar_url AS avatarUrl FROM users WHERE id=? LIMIT 1`,
+    [req.auth.uid]
+  );
+  if (!rows.length) return res.status(404).json({ error: 'not_found' });
+  res.json(rows[0]);
 });
 
 module.exports = r;
