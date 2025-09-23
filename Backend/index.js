@@ -5,6 +5,8 @@ const morgan = require('morgan');
 const { oauthClient, SCOPES, saveTokens } = require('./lib/google');
 
 const app = express();
+const cookieParser = require('cookie-parser');
+app.use(cookieParser());
 app.set('trust proxy', true);
 app.use(express.json());
 app.use(morgan('tiny'));

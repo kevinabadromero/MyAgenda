@@ -2,10 +2,21 @@
 const { Router } = require('express');
 const { z } = require('zod');
 const bcrypt = require('bcryptjs');
+const crypto = require('crypto');
 const { pool } = require('../db');
 const { DateTime } = require("luxon");
-const { signToken, requireAuth } = require('../auth');
-const { oauthClient, SCOPES, saveTokens, insertEvent } = require('../lib/google');
+
+// Auth helpers (Access + Refresh)
+const {
+  requireAuth,
+  signAccessToken,
+  newJti,
+  refreshCookieOptions,
+  cookieName,
+} = require('../auth');
+
+const { oauthClient, SCOPES, insertEvent } = require('../lib/google');
+
 const HEX = /^#[0-9a-fA-F]{6}$/;
 
 function slugify(s) {
@@ -49,9 +60,11 @@ async function getOwnerByEmail(conn, email) {
   return rows[0] || null;
 }
 
-// ------- Auth -------
+// ========================================================
+// Auth
+// ========================================================
 r.post('/login', async (req, res) => {
-  // Acepta con o sin `u` (u sirve para desambiguar si tienes el mismo email en varias cuentas)
+  // Acepta con o sin `u` (u sirve para desambiguar si el mismo email existe en varios tenants)
   const body = z.object({
     email: z.string().email(),
     password: z.string().min(4),
@@ -75,19 +88,91 @@ r.post('/login', async (req, res) => {
       owner = await getOwnerByEmail(conn, body.data.email);
     }
     if (!owner) return res.status(401).json({ error: 'invalid_credentials' });
-
     if (!owner.password_hash) return res.status(401).json({ error: 'no_password_set' });
 
     const ok = await bcrypt.compare(body.data.password, owner.password_hash);
     if (!ok) return res.status(401).json({ error: 'invalid_credentials' });
 
-    const token = signToken(String(owner.id));
-    res.json({ token, owner: { id: String(owner.id), slug: owner.slug, name: owner.name, email: owner.email } });
+    // Access token corto
+    const token = signAccessToken(String(owner.id));
+
+    // Refresh token (jti) persistido y cookie HttpOnly
+    const jti = newJti(); // uuid v4
+    const expiresAt = DateTime.utc().plus({ days: 30 }).toSQL({ includeOffset: false });
+    await conn.execute(
+      `INSERT INTO refresh_tokens (jti, user_id, expires_at) VALUES (?,?,?)`,
+      [jti, owner.id, expiresAt]
+    );
+    res.cookie(cookieName, jti, refreshCookieOptions());
+
+    res.json({
+      token,
+      owner: { id: String(owner.id), slug: owner.slug, name: owner.name, email: owner.email }
+    });
   } catch (e) {
-    console.error(e); res.status(500).json({ error: 'internal_error' });
-  } finally { conn.release(); }
+    console.error(e);
+    res.status(500).json({ error: 'internal_error' });
+  } finally {
+    conn.release();
+  }
 });
 
+// Refresh (rota el refresh y emite nuevo access)
+r.post('/refresh', async (req, res) => {
+  const jti = req.cookies?.[cookieName];
+  if (!jti) return res.status(401).json({ error: 'unauthorized' });
+
+  const conn = await pool.getConnection();
+  try {
+    const [rows] = await conn.execute(
+      `SELECT user_id, is_revoked, expires_at FROM refresh_tokens WHERE jti=? LIMIT 1`,
+      [jti]
+    );
+    const row = rows[0];
+    if (!row) return res.status(401).json({ error: 'unauthorized' });
+    if (row.is_revoked) return res.status(401).json({ error: 'unauthorized' });
+    if (new Date(row.expires_at) < new Date()) return res.status(401).json({ error: 'unauthorized' });
+
+    // Rotación: revoca el actual y crea uno nuevo
+    await conn.beginTransaction();
+    await conn.execute(`UPDATE refresh_tokens SET is_revoked=1 WHERE jti=?`, [jti]);
+
+    const newId = crypto.randomUUID();
+    const expiresAt = DateTime.utc().plus({ days: 30 }).toSQL({ includeOffset: false });
+    await conn.execute(
+      `INSERT INTO refresh_tokens (jti, user_id, expires_at) VALUES (?,?,?)`,
+      [newId, row.user_id, expiresAt]
+    );
+    await conn.commit();
+
+    // Nueva cookie y nuevo access
+    res.cookie(cookieName, newId, refreshCookieOptions());
+    const access = signAccessToken(String(row.user_id));
+    res.json({ token: access });
+  } catch (e) {
+    try { await conn.rollback(); } catch {}
+    console.error(e);
+    res.status(500).json({ error: 'internal_error' });
+  } finally {
+    conn.release();
+  }
+});
+
+// Logout (revoca refresh y limpia cookie)
+r.post('/logout', async (req, res) => {
+  const jti = req.cookies?.[cookieName];
+  if (jti) {
+    try {
+      await pool.execute(`UPDATE refresh_tokens SET is_revoked=1 WHERE jti=?`, [jti]);
+    } catch {}
+  }
+  res.clearCookie(cookieName, refreshCookieOptions());
+  res.json({ ok: true });
+});
+
+// ========================================================
+// Event Types / Availability / Bookings (protegidas)
+// ========================================================
 r.get('/me', requireAuth, async (req, res) => {
   const conn = await pool.getConnection();
   try {
@@ -99,7 +184,6 @@ r.get('/me', requireAuth, async (req, res) => {
   } finally { conn.release(); }
 });
 
-// ------- Event Types -------
 r.get('/event-types', requireAuth, async (req, res) => {
   const conn = await pool.getConnection();
   try {
@@ -415,9 +499,8 @@ r.put("/bookings/:id/status", requireAuth, async (req, res) => {
   finally { conn.release(); }
 });
 
-// ------- Google (ya sin u, usa token/uid) -------
+// ------- Google (usa token/uid) -------
 r.get('/google/auth-url', requireAuth, async (_req,res)=>{
-  // Si conservas Google, puedes generar state con el uid directo
   const client = oauthClient();
   const url = client.generateAuthUrl({
     access_type: 'offline',
