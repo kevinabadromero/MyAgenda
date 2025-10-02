@@ -122,6 +122,10 @@ export type AdminBooking = {
   status: string;
   durationMin?: number;
   bufferMin?: number;
+  priceCents?: number | null;
+  depositPercent?: number | null;
+  depositCents?: number | null;
+  depositStatus?: "none" | "pending" | "confirmed" | "waived";
 };
 
 export async function adminListBookings(params: {
@@ -157,17 +161,26 @@ export async function adminCreateBooking(payload: {
 
 // === Event types ===
 export type EventTypeAdmin = {
-  id: string; name: string; slug: string; durationMin: number;
-  bufferMin: number; colorHex: string; isActive: boolean;
+  id: string;
+  name: string;
+  slug: string;
+  durationMin: number;
+  bufferMin: number;
+  colorHex: string;
+  isActive: boolean;
+  priceCents: number | null;
+  depositPercent: number | null;
 };
 
 export async function adminListEventTypes() {
   return getJSON<{ items: EventTypeAdmin[] }>(`/admin/event-types`);
 }
 export async function adminCreateEventType(payload: Omit<EventTypeAdmin, "id">) {
-  return sendJSON(`/admin/event-types`, "POST", payload);
+  // payload DEBE traer priceCents y depositPercent (o null)
+  return sendJSON("/admin/event-types", "POST", payload);
 }
 export async function adminUpdateEventType(id: string, payload: Omit<EventTypeAdmin, "id">) {
+  // idem: incluye priceCents y depositPercent (o null)
   return sendJSON(`/admin/event-types/${id}`, "PUT", payload);
 }
 export async function adminDeleteEventType(id: string) {
@@ -204,4 +217,32 @@ export async function adminGetProfile() {
 export async function adminUploadAvatar(file: File) {
   const form = new FormData(); form.append("file", file);
   return sendFORM<{ avatarUrl: string }>("/admin/profile/avatar", form, "POST");
+}
+export async function adminGetMobilePay() {
+  return getJSON<{
+    enabled: number;
+    bank_code: string | null;
+    phone: string | null;
+    id_number: string | null;
+    account_name: string | null;
+    deposit_percent: number; // default owner si el tipo no define
+  }>("/admin/payments/mobile");
+}
+
+export async function adminSaveMobilePay(payload: {
+  enabled: boolean;
+  bank_code?: string;
+  phone?: string;
+  id_number?: string;
+  account_name?: string;
+  deposit_percent?: number;
+}) {
+  return sendJSON("/admin/payments/mobile", "PUT", payload);
+}
+
+export async function adminConfirmDeposit(id: string | number) {
+  return sendJSON(`/admin/bookings/${id}/deposit/confirm`, "PUT", {});
+}
+export async function adminWaiveDeposit(id: string | number) {
+  return sendJSON(`/admin/bookings/${id}/deposit/waive`, "PUT", {});
 }

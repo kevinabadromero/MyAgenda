@@ -12,6 +12,11 @@ export default {
             600: "#4f46e5",
             700: "#4338ca",
           },
+          accent: "#ff02ff",
+          accent2: "#ff7a45",
+          primary: "#8207c9",
+          secondary: "#7143e1",
+          text: "#221952",
           ink: "#0f172a",     // textos oscuros
           panel: "#ffffff",   // paneles
           surface: "#f6f7fb",     // fondo app

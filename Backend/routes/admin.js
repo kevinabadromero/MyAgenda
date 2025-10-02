@@ -200,19 +200,25 @@ r.get('/event-types', requireAuth, async (req, res) => {
     if (!owner) return res.status(404).json({ error:'owner_not_found' });
 
     const [rows] = await conn.execute(
-      `SELECT id, name, slug, duration_min, buffer_min, color_hex, is_active
-         FROM event_types WHERE user_id=? ORDER BY name ASC`,
+      `SELECT id, name, slug, duration_min, buffer_min, color_hex, is_active,
+              price_cents, deposit_percent
+         FROM event_types
+        WHERE user_id=? ORDER BY name ASC`,
       [owner.id]
     );
-    res.json({ items: rows.map(x => ({
-      id: String(x.id),
-      name: x.name,
-      slug: x.slug,
-      durationMin: x.duration_min,
-      bufferMin: x.buffer_min,
-      colorHex: x.color_hex,
-      isActive: !!x.is_active
-    }))});
+    res.json({
+      items: rows.map(x => ({
+        id: String(x.id),
+        name: x.name,
+        slug: x.slug,
+        durationMin: x.duration_min,
+        bufferMin: x.buffer_min,
+        colorHex: x.color_hex,
+        isActive: !!x.is_active,
+        priceCents: x.price_cents,           // ⬅️ nuevo
+        depositPercent: x.deposit_percent    // ⬅️ nuevo
+      }))
+    });
   } catch (e) { console.error(e); res.status(500).json({ error:'internal_error' }); }
   finally { conn.release(); }
 });
@@ -224,7 +230,9 @@ r.post('/event-types', requireAuth, async (req, res) => {
     durationMin: z.number().int().min(5).max(24*60),
     bufferMin: z.number().int().min(0).max(8*60),
     colorHex: z.string().regex(HEX).default('#4f46e5'),
-    isActive: z.boolean().default(true)
+    isActive: z.boolean().default(true),
+    priceCents: z.number().int().min(0).nullable().optional(),       // ⬅️ nuevo
+    depositPercent: z.number().int().min(0).max(100).nullable().optional() // ⬅️ nuevo
   }).safeParse(req.body);
   if (!body.success) return res.status(400).json({ error:'bad_request' });
 
@@ -237,9 +245,16 @@ r.post('/event-types', requireAuth, async (req, res) => {
     const unique = await ensureUniqueSlug(conn, owner.id, base, null);
 
     const [ins] = await conn.execute(
-      `INSERT INTO event_types (user_id, name, slug, duration_min, buffer_min, color_hex, is_active)
-       VALUES (?,?,?,?,?,?,?)`,
-      [owner.id, body.data.name, unique, body.data.durationMin, body.data.bufferMin, body.data.colorHex, body.data.isActive ? 1 : 0]
+      `INSERT INTO event_types
+        (user_id, name, slug, duration_min, buffer_min, color_hex, is_active, price_cents, deposit_percent)
+       VALUES (?,?,?,?,?,?,?,?,?)`,
+      [
+        owner.id, body.data.name, unique,
+        body.data.durationMin, body.data.bufferMin,
+        body.data.colorHex, body.data.isActive ? 1 : 0,
+        body.data.priceCents ?? null,
+        body.data.depositPercent ?? null
+      ]
     );
 
     res.json({ ok:true, id: String(ins.insertId) });
@@ -247,16 +262,20 @@ r.post('/event-types', requireAuth, async (req, res) => {
   finally { conn.release(); }
 });
 
+
 r.put('/event-types/:id', requireAuth, async (req, res) => {
   const id = parseInt(req.params.id, 10);
   if (!id) return res.status(400).json({ error:'bad_request' });
+
   const body = z.object({
     name: z.string().min(1),
     slug: z.string().optional(),
     durationMin: z.number().int().min(5).max(24*60),
     bufferMin: z.number().int().min(0).max(8*60),
     colorHex: z.string().regex(HEX).default('#4f46e5'),
-    isActive: z.boolean().default(true)
+    isActive: z.boolean().default(true),
+    priceCents: z.number().int().min(0).nullable().optional(),         // ⬅️ nuevo
+    depositPercent: z.number().int().min(0).max(100).nullable().optional() // ⬅️ nuevo
   }).safeParse(req.body);
   if (!body.success) return res.status(400).json({ error:'bad_request' });
 
@@ -275,14 +294,22 @@ r.put('/event-types/:id', requireAuth, async (req, res) => {
 
     await conn.execute(
       `UPDATE event_types
-        SET name=?, slug=?, duration_min=?, buffer_min=?, color_hex=?, is_active=?
+          SET name=?, slug=?, duration_min=?, buffer_min=?, color_hex=?, is_active=?,
+              price_cents=?, deposit_percent=?
         WHERE id=? AND user_id=?`,
-      [body.data.name, unique, body.data.durationMin, body.data.bufferMin, body.data.colorHex, body.data.isActive ? 1 : 0, id, owner.id]
+      [
+        body.data.name, unique, body.data.durationMin, body.data.bufferMin,
+        body.data.colorHex, body.data.isActive ? 1 : 0,
+        body.data.priceCents ?? null,
+        body.data.depositPercent ?? null,
+        id, owner.id
+      ]
     );
     res.json({ ok:true });
   } catch (e) { console.error(e); res.status(500).json({ error:'internal_error' }); }
   finally { conn.release(); }
 });
+
 
 r.delete('/event-types/:id', requireAuth, async (req, res) => {
   const id = parseInt(req.params.id, 10);
@@ -348,6 +375,7 @@ r.put('/availability', requireAuth, async (req, res) => {
 });
 
 // ------- Bookings -------
+// ------- Bookings -------
 r.get("/bookings", requireAuth, async (req, res) => {
   const page = Math.max(1, parseInt(req.query.page || "1", 10));
   const pageSizeRaw = Math.max(1, parseInt(req.query.pageSize || "50", 10));
@@ -356,7 +384,11 @@ r.get("/bookings", requireAuth, async (req, res) => {
 
   const qStatus = String(req.query.status || "");
   const qEventSlug = String(req.query.eventType || "");
-  const qDate = String(req.query.date || ""); // YYYY-MM-DD
+  const qDate = String(req.query.date || ""); // YYYY-MM-DD (un sólo día)
+
+  // NUEVO: rango opcional (YYYY-MM-DD)
+  const qFrom = String(req.query.from || "");
+  const qTo   = String(req.query.to   || "");
 
   const conn = await pool.getConnection();
   try {
@@ -365,48 +397,84 @@ r.get("/bookings", requireAuth, async (req, res) => {
 
     let startSQL = null, endSQL = null;
     if (qDate) {
+      // día completo usando TZ del owner
       const start = DateTime.fromISO(qDate, { zone: owner.timezone }).startOf("day");
       const end   = start.endOf("day");
       startSQL = start.toUTC().toFormat("yyyy-LL-dd HH:mm:ss.SSS");
       endSQL   = end.toUTC().toFormat("yyyy-LL-dd HH:mm:ss.SSS");
+    } else if (qFrom && qTo) {
+      // rango [from, to] inclusive, en TZ del owner
+      const start = DateTime.fromISO(qFrom, { zone: owner.timezone }).startOf("day");
+      const end   = DateTime.fromISO(qTo,   { zone: owner.timezone }).endOf("day");
+      if (start.isValid && end.isValid) {
+        startSQL = start.toUTC().toFormat("yyyy-LL-dd HH:mm:ss.SSS");
+        endSQL   = end.toUTC().toFormat("yyyy-LL-dd HH:mm:ss.SSS");
+      }
     }
 
     const where = ["b.user_id = ?"];
     const args = [owner.id];
 
-    if (qStatus === "confirmed" || qStatus === "cancelled") { where.push("b.status = ?"); args.push(qStatus); }
+    if (qStatus === "confirmed" || qStatus === "cancelled" || qStatus === "pending") {
+      where.push("b.status = ?");
+      args.push(qStatus);
+    }
     if (qEventSlug) { where.push("et.slug = ?"); args.push(qEventSlug); }
     if (startSQL && endSQL) { where.push("(b.starts_at < ? AND b.ends_at > ?)"); args.push(endSQL, startSQL); }
 
     const sql = `
-      SELECT b.id, b.event_type_id, b.guest_name, b.guest_email,
-             b.starts_at, b.ends_at, b.status,
-             et.name AS event_type_name, et.slug AS event_type_slug,
-             et.duration_min, et.buffer_min, et.color_hex AS event_type_color
-        FROM bookings b
-        JOIN event_types et ON et.id = b.event_type_id AND et.user_id = b.user_id
-       WHERE ${where.join(" AND ")}
-       ORDER BY b.starts_at DESC
-       LIMIT ${Number(offset)|0}, ${Number(pageSize)|0}`;
+      SELECT
+        b.id, b.event_type_id, b.guest_name, b.guest_email,
+        b.starts_at, b.ends_at, b.status,
+        -- CAMPOS DE PAGO:
+        b.price_cents, b.deposit_percent, b.deposit_cents,
+        b.deposit_status, b.deposit_reference,
+        -- EVENT TYPE:
+        et.name AS event_type_name, et.slug AS event_type_slug,
+        et.duration_min, et.buffer_min, et.color_hex AS event_type_color
+      FROM bookings b
+      JOIN event_types et ON et.id = b.event_type_id AND et.user_id = b.user_id
+      WHERE ${where.join(" AND ")}
+      ORDER BY b.starts_at DESC
+      LIMIT ${Number(offset) | 0}, ${Number(pageSize) | 0}
+    `;
 
     const [rows] = await conn.execute(sql, args);
 
     res.json({
-      items: rows.map(rw => ({
+      items: rows.map((rw) => ({
         id: String(rw.id),
-        eventType: { id: String(rw.event_type_id), name: rw.event_type_name, slug: rw.event_type_slug, colorHex: rw.event_type_color },
+        eventType: {
+          id: String(rw.event_type_id),
+          name: rw.event_type_name,
+          slug: rw.event_type_slug,
+          colorHex: rw.event_type_color,
+        },
         guestName: rw.guest_name,
         guestEmail: rw.guest_email,
         startsAt: rw.starts_at,
-        endsAt:   rw.ends_at,
-        status:   rw.status,
+        endsAt: rw.ends_at,
+        status: rw.status,
         durationMin: rw.duration_min,
         bufferMin: rw.buffer_min,
+
+        // EXPONEMOS TAMBIÉN LOS CAMPOS DE PAGO (snake_case tal como vienen de la DB):
+        price_cents: rw.price_cents,
+        deposit_percent: rw.deposit_percent,
+        deposit_cents: rw.deposit_cents,
+        deposit_status: rw.deposit_status,
+        deposit_reference: rw.deposit_reference,
       })),
-      page, pageSize, timezone: owner.timezone
+      page,
+      pageSize,
+      timezone: owner.timezone,
     });
-  } catch (e) { console.error(e); res.status(500).json({ error: "internal_error" }); }
-  finally { conn.release(); }
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: "internal_error" });
+  } finally {
+    conn.release();
+  }
 });
 
 r.post("/bookings", requireAuth, async (req, res) => {
@@ -425,8 +493,9 @@ r.post("/bookings", requireAuth, async (req, res) => {
     const owner = await getOwnerById(conn, req.auth.uid);
     if (!owner) { await conn.rollback(); return res.status(404).json({ error: "owner_not_found" }); }
 
+    // Trae el tipo con precio y % de abono
     const et = (await conn.execute(
-      `SELECT id, name, duration_min, buffer_min
+      `SELECT id, name, duration_min, buffer_min, price_cents, deposit_percent
          FROM event_types
         WHERE user_id=? AND slug=? AND is_active=1
         LIMIT 1`, [owner.id, body.data.eventType]
@@ -437,6 +506,7 @@ r.post("/bookings", requireAuth, async (req, res) => {
     if (!startUTC.isValid) { await conn.rollback(); return res.status(400).json({ error: "invalid_start" }); }
     const endUTC = startUTC.plus({ minutes: et.duration_min });
 
+    // colisión
     const clash = (await conn.execute(
       `SELECT id FROM bookings
         WHERE user_id=? AND status='confirmed'
@@ -448,38 +518,69 @@ r.post("/bookings", requireAuth, async (req, res) => {
     ))[0];
     if (clash.length) { await conn.rollback(); return res.status(409).json({ error: "slot_taken" }); }
 
+    // Settings de pago móvil
+    const [mpRows] = await conn.execute(
+      `SELECT enabled, deposit_percent, bank_code, phone, id_number, account_name
+         FROM mobile_pay_settings WHERE user_id=? LIMIT 1`,
+      [owner.id]
+    );
+    const mps = mpRows[0] || null;
+
+    // Resolver precio y depósito
+    const priceCents     = et.price_cents ?? null;
+    const percentFromET  = et.deposit_percent;
+    const percentFromSet = mps?.deposit_percent;
+    const depositPercent = percentFromET ?? percentFromSet ?? 30;
+
+    let depositCents = null, depositStatus = 'none', finalStatus = 'confirmed';
+    if (mps?.enabled && priceCents != null) {
+      depositCents  = Math.round(priceCents * depositPercent / 100);
+      depositStatus = 'pending';
+      finalStatus   = 'pending';
+    }
+
+    // Inserta booking (snapshot de precio/%/monto)
     const [ins] = await conn.execute(
-      `INSERT INTO bookings (user_id, event_type_id, guest_name, guest_email, starts_at, ends_at, status)
-        VALUES (?,?,?,?,?,?, 'confirmed')`,
-      [owner.id, et.id, body.data.guestName, body.data.guestEmail,
+      `INSERT INTO bookings
+         (user_id, event_type_id, guest_name, guest_email, starts_at, ends_at,
+          price_cents, deposit_percent, deposit_cents, deposit_status, status)
+       VALUES (?,?,?,?,?,?,?,?,?,?,
+         ?)`,
+      [
+        owner.id, et.id, body.data.guestName, body.data.guestEmail,
         startUTC.toSQL({ includeOffset: false }),
-        endUTC.toSQL({ includeOffset: false })]
+        endUTC.toSQL({ includeOffset: false }),
+        priceCents, depositPercent, depositCents, depositStatus, finalStatus
+      ]
     );
     const bookingId = ins.insertId;
 
     await conn.commit();
 
-    try {
-      const sync = await insertEvent({
-        user: { id: owner.id, timezone: owner.timezone },
-        booking: {
-          id: bookingId,
-          starts_at: startUTC.toISO(),
-          ends_at: endUTC.toISO(),
-          guest_name: body.data.guestName,
-          guest_email: body.data.guestEmail
-        },
-        eventType: { name: et.name }
-      });
-      if (sync?.ok) {
-        await pool.execute(
-          `UPDATE bookings SET google_event_id=?, google_calendar_id=? WHERE id=?`,
-          [sync.eventId, sync.calendarId, bookingId]
-        );
-      }
-    } catch (e) { console.warn("google sync error:", e); }
+    // Sincroniza a Google SOLO si quedó confirmed
+    if (finalStatus === 'confirmed') {
+      try {
+        const sync = await insertEvent({
+          user: { id: owner.id, timezone: owner.timezone },
+          booking: {
+            id: bookingId,
+            starts_at: startUTC.toISO(),
+            ends_at: endUTC.toISO(),
+            guest_name: body.data.guestName,
+            guest_email: body.data.guestEmail
+          },
+          eventType: { name: et.name }
+        });
+        if (sync?.ok) {
+          await pool.execute(
+            `UPDATE bookings SET google_event_id=?, google_calendar_id=? WHERE id=?`,
+            [sync.eventId, sync.calendarId, bookingId]
+          );
+        }
+      } catch (e) { console.warn("google sync error:", e); }
+    }
 
-    res.json({ ok: true, id: String(bookingId) });
+    res.json({ ok: true, id: String(bookingId), status: finalStatus });
   } catch (e) {
     console.error(e);
     try { await conn.rollback(); } catch {}
@@ -490,22 +591,48 @@ r.post("/bookings", requireAuth, async (req, res) => {
 });
 
 r.put("/bookings/:id/status", requireAuth, async (req, res) => {
-  const id = +req.params.id;
-  const body = z.object({ status: z.enum(["confirmed", "cancelled"]) }).safeParse(req.body);
-  if (!Number.isFinite(id) || !body.success) return res.status(400).json({ error: "bad_request" });
+  const id = Number(req.params.id || 0);
+  const parsed = z.object({ status: z.enum(["confirmed", "cancelled"]) }).safeParse(req.body);
+  if (!id || !parsed.success) return res.status(400).json({ error: "bad_request" });
+  const newStatus = parsed.data.status;
 
   const conn = await pool.getConnection();
   try {
     const owner = await getOwnerById(conn, req.auth.uid);
     if (!owner) return res.status(404).json({ error: "owner_not_found" });
 
-    const [up] = await conn.execute(
-      `UPDATE bookings SET status=? WHERE id=? AND user_id=?`,
-      [body.data.status, id, owner.id]
-    );
+    // Actualiza status y, si aplica pago (price_cents > 0), también deposit_status
+    let sql;
+    if (newStatus === "confirmed") {
+      sql = `
+        UPDATE bookings
+           SET status='confirmed',
+               deposit_status = CASE
+                 WHEN price_cents IS NOT NULL AND price_cents > 0 THEN 'confirmed'
+                 ELSE deposit_status
+               END
+         WHERE id=? AND user_id=?`;
+    } else { // cancelled
+      sql = `
+        UPDATE bookings
+           SET status='cancelled',
+               deposit_status = CASE
+                 WHEN price_cents IS NOT NULL AND price_cents > 0 THEN 'waived'
+                 ELSE deposit_status
+               END
+         WHERE id=? AND user_id=?`;
+    }
+
+    const [up] = await conn.execute(sql, [id, owner.id]);
+    if (!up.affectedRows) return res.status(404).json({ error: "booking_not_found" });
+
     res.json({ ok: true, changed: up.affectedRows });
-  } catch (e) { console.error(e); res.status(500).json({ error: "internal_error" }); }
-  finally { conn.release(); }
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: "internal_error" });
+  } finally {
+    conn.release();
+  }
 });
 
 // ------- Google (usa token/uid) -------
@@ -647,4 +774,61 @@ r.get('/profile', requireAuth, async (req, res) => {
 
   res.json(out);
 });
+
+// === Pago Móvil (Admin Settings) ===
+// GET /admin/payments/mobile
+r.get('/payments/mobile', requireAuth, async (req, res) => {
+  const [rows] = await pool.execute(
+    `SELECT enabled, bank_code, phone, id_number, account_name, deposit_percent
+       FROM mobile_pay_settings WHERE user_id=? LIMIT 1`, [req.auth.uid]
+  );
+  if (!rows.length) return res.json({
+    enabled: 0, bank_code: null, phone: null, id_number: null, account_name: null, deposit_percent: 30
+  });
+  res.json(rows[0]);
+});
+
+// PUT /admin/payments/mobile
+r.put('/payments/mobile', requireAuth, async (req, res) => {
+  const { enabled, bank_code, phone, id_number, account_name, deposit_percent } = req.body || {};
+  await pool.execute(
+    `INSERT INTO mobile_pay_settings
+       (user_id, enabled, bank_code, phone, id_number, account_name, deposit_percent)
+     VALUES (?,?,?,?,?,?,?)
+     ON DUPLICATE KEY UPDATE
+       enabled=VALUES(enabled), bank_code=VALUES(bank_code), phone=VALUES(phone),
+       id_number=VALUES(id_number), account_name=VALUES(account_name),
+       deposit_percent=VALUES(deposit_percent)`,
+    [req.auth.uid, enabled?1:0, bank_code, phone, id_number, account_name, deposit_percent ?? 30]
+  );
+  res.json({ ok:true });
+});
+
+// PUT /admin/bookings/:id/deposit/confirm
+r.put('/bookings/:id/deposit/confirm', requireAuth, async (req, res) => {
+  const id = +req.params.id;
+  if (!Number.isFinite(id)) return res.status(400).json({ error:'bad_request' });
+  const [up] = await pool.execute(
+    `UPDATE bookings
+        SET deposit_status='confirmed', status='confirmed', deposit_confirmed_at=NOW(3)
+      WHERE id=? AND user_id=? AND deposit_status='pending'`,
+    [id, req.auth.uid]
+  );
+  res.json({ ok:true, changed: up.affectedRows });
+});
+
+// PUT /admin/bookings/:id/deposit/waive
+r.put('/bookings/:id/deposit/waive', requireAuth, async (req, res) => {
+  const id = +req.params.id;
+  if (!Number.isFinite(id)) return res.status(400).json({ error:'bad_request' });
+  const [up] = await pool.execute(
+    `UPDATE bookings
+        SET deposit_status='waived', status='confirmed'
+      WHERE id=? AND user_id=? AND deposit_status IN ('pending','none')`,
+    [id, req.auth.uid]
+  );
+  res.json({ ok:true, changed: up.affectedRows });
+});
+
+
 module.exports = r;

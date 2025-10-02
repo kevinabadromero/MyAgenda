@@ -116,7 +116,7 @@ export default function AdminLayout() {
       <div className="grid h-[100dvh] overflow-hidden grid-cols-1 lg:grid-cols-[84px_minmax(0,1fr)]">
 
         {/* SIDEBAR (desk) */}
-        <aside className="hidden lg:flex h-full sticky top-0 bg-gradient-to-b from-[#1a2c8c] via-[#192a7a] to-[#101a58] text-white px-3 py-4 overflow-y-auto">
+        <aside className="hidden lg:flex h-full sticky top-0 nav text-white px-3 py-4 overflow-y-auto">
           <div className="flex flex-col w-full items-center gap-3">
             {/* logo */}
             <Link to="/admin/bookings" className="mb-4 mt-1">

@@ -1,5 +1,12 @@
 // src/lib/api.ts
 const API_BASE = import.meta.env.VITE_API_BASE || "https://api.dappointment.com";
+const AURAUX_BASE = import.meta.env.VITE_AURAUX_BASE || "https://api.auraux.dev";
+
+async function getJSONAbs<T>(url: string): Promise<T> {
+  const r = await fetch(url, { mode: "cors" });
+  if (!r.ok) throw new Error(String(r.status));
+  return r.json();
+}
 
 function getUsernameFromURL(): string {
   const u = new URLSearchParams(window.location.search).get("u");
@@ -71,4 +78,8 @@ export async function createBooking(payload: {
   startISO: string;
 }) {
   return postJSON<{ ok: boolean; id: string }>(withUser("/public/book"), payload);
+}
+
+export async function vesRate() {
+  return getJSONAbs<{ ves: number }>(`${AURAUX_BASE}/rates/ves`);
 }

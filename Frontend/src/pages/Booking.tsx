@@ -188,7 +188,16 @@ export default function Booking() {
         guestEmail: guestEmail.trim(),
         startISO: selectedISO
       });
-      if (r.ok) { nav(`/success/${r.id}?dl=ics`); return; }
+    
+      // r.ok, r.id, r.status ("confirmed" | "pending")
+      if (r?.ok && r?.id) {
+        if (r.status === "confirmed") {
+          nav(`/success/${r.id}?dl=ics&u=${encodeURIComponent(profile?.slug)}`);    // descarga automática del .ics
+        } else {
+          nav(`/success/${r.id}?u=${encodeURIComponent(profile?.slug)}`);           // muestra Pago Móvil y referencia
+        }
+        return;
+      }
       setFormError("No se pudo confirmar la reserva.");
     } catch (e:any) {
       const msg = String(e);

@@ -1,4 +1,7 @@
 @import "tailwindcss";
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
 
 /* =========================
    Tokens (Tailwind v4 @theme)
@@ -8,7 +11,16 @@
   --color-surface: #f6f7fb;   /* fondo app */
   --color-panel:   #ffffff;   /* tarjetas/paneles */
   --color-ink:     #0f172a;   /* texto principal */
+  --color-primary:  #8207c9;   /* bg-primary */
+  --color-secondary:#7143e1;
+  --color-accent:   #ff02ff;
+  --color-accent-2: #ff7a45;
+  --color-text:     #221952;
 
+  /* ejemplos extra (opcionales) */
+  --radius-2xl: 1rem;
+  --shadow-soft: 0 10px 30px rgba(2,6,23,.08);
+  --shadow-ring: 0 0 0 3px rgba(99,91,255,.25);
   /* Marca */
   --color-brand-50:  #eef2ff;
   --color-brand-100: #e0e7ff;
@@ -106,4 +118,58 @@ body { @apply bg-surface text-ink; }
 .pill{
   will-change: filter;
   transition: filter 300ms;
+}
+.nav {
+  background: linear-gradient(135deg, #221952 0%, #8207c9 35%, #ff02ff 70%, #ff7a45 100%);
+}
+@layer components {
+  /* Botón base opcional */
+  .btnx {
+    background-color: var(--color-secondary);
+    color: white;
+    padding: 0.5rem 1rem;
+    border-radius: 0.5rem;
+    transition: all 200ms ease-out;
+    transform: translateY(0);
+    &:hover {
+      transform: translateY(-0.125rem);
+    }
+    &:focus {
+      outline: none;
+      box-shadow: 0 0 0 0.125rem rgba(0, 0, 0, 0.2), 0 0 0.25rem 0.125rem var(--primary);
+    }
+  }
+
+  /* Efecto destello desde el centro */
+  .btn-burst {
+    position: relative;
+    overflow: hidden;           /* recorta el destello dentro del botón */
+    will-change: transform;     /* suaviza el hover lift */
+  }
+  .btn-burst::after {
+    content: "";
+    position: absolute;
+    left: 50%; top: 50%;
+    width: 120%;                /* más grande que el botón para cubrir bien */
+    aspect-ratio: 1 / 1;
+    transform: translate(-50%, -50%) scale(0);
+    border-radius: 9999px;      /* círculo */
+    pointer-events: none;
+    background: radial-gradient(
+      circle at center,
+      rgba(255,255,255,0.55),
+      rgba(255,255,255,0) 60%
+    );
+    opacity: 0;
+  }
+  .btn-burst:hover::after {
+    animation: btn-burst .6s ease-out forwards;
+  }
+}
+
+/* Animación del destello */
+@keyframes btn-burst {
+  0%   { transform: translate(-50%, -50%) scale(0);   opacity: .6; }
+  70%  { transform: translate(-50%, -50%) scale(1.6); opacity: .25; }
+  100% { transform: translate(-50%, -50%) scale(2.2); opacity: 0; }
 }

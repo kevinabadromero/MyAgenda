@@ -11,6 +11,8 @@ type Form = {
   bufferMin: number;
   colorHex: string;
   isActive: boolean;
+  priceCents?: number | null;
+  depositPercent?: number | null;
 };
 
 const slugify = (s: string) =>
@@ -60,6 +62,8 @@ export default function AdminEventTypes() {
                   <th className="py-2">Duración</th>
                   {/* oculto en móvil, visible en desktop */}
                   <th className="py-2 hidden lg:table-cell">Buffer</th>
+                  <th className="py-2 hidden lg:table-cell">Precio</th>
+                  <th className="py-2 hidden lg:table-cell">% Abono</th>
                   <th className="py-2">Estado</th>
                   <th className="py-2"></th>
                 </tr>
@@ -88,7 +92,12 @@ export default function AdminEventTypes() {
                     <td className="py-2 hidden lg:table-cell">
                       {et.bufferMin} min
                     </td>
-
+                    <td className="py-2 hidden lg:table-cell">
+                      {et.priceCents != null ? `$ ${(et.priceCents / 100).toFixed(2)}` : "—"}
+                    </td>
+                    <td className="py-2 hidden lg:table-cell">
+                      {et.depositPercent != null ? `${et.depositPercent}%` : "hereda"}
+                    </td>
                     {/* Estado: punto en móvil, texto en desktop */}
                     <td className="py-2">
                       <div className="flex items-center gap-2">
@@ -148,11 +157,15 @@ export default function AdminEventTypes() {
           initial={modal.mode==='edit' && current ? {
             name: current.name, slug: current.slug,
             durationMin: current.durationMin, bufferMin: current.bufferMin,
-            colorHex: current.colorHex, isActive: current.isActive
+            colorHex: current.colorHex, isActive: current.isActive,
+            priceCents: current.priceCents ?? null,
+            depositPercent: current.depositPercent ?? null,
           } : {
             name: '', slug: '',
             durationMin: 30, bufferMin: 0,
-            colorHex: '#4f46e5', isActive: true
+            colorHex: '#4f46e5', isActive: true,
+            priceCents: null,
+            depositPercent: null,
           }}
           onClose={()=>setModal(null)}
           onSave={async (values) => {
@@ -254,6 +267,52 @@ function EventTypeModal({
             <input type="checkbox" checked={v.isActive} onChange={e=>set('isActive', e.target.checked)} />
             Activo
           </label>
+
+          {/* === Precio y % de abono === */}
+          <div className="grid md:grid-cols-2 gap-3">
+            {/* Precio (en la UI usas $ y conviertes a centavos) */}
+            <div>
+              <label className="label">Precio</label>
+              <div className="flex items-center gap-2">
+                <span className="px-3 py-2 rounded-xl border bg-gray-50 text-gray-500">$</span>
+                <input
+                  className="input"
+                  type="number"
+                  min={0}
+                  step="0.01"
+                  value={v.priceCents != null ? (v.priceCents / 100).toFixed(2) : ""}
+                  onChange={(e) => {
+                    const raw = e.target.value.trim();
+                    set("priceCents", raw === "" ? null : Math.round(parseFloat(raw) * 100));
+                  }}
+                  placeholder="0.00"
+                />
+              </div>
+              <p className="text-xs text-slate-500 mt-1">
+                Déjalo vacío para no fijar precio (no se pedirá abono).
+              </p>
+            </div>
+
+            {/* % de abono */}
+            <div>
+              <label className="label">% de abono</label>
+              <input
+                className="input"
+                type="number"
+                min={0}
+                max={100}
+                value={v.depositPercent ?? ""}
+                onChange={(e) => {
+                  const raw = e.target.value.trim();
+                  set("depositPercent", raw === "" ? null : Number(raw));
+                }}
+                placeholder="(heredar settings / 30%)"
+              />
+              <p className="text-xs text-slate-500 mt-1">
+                Vacío = hereda el valor por defecto de Pago Móvil (o 30%).
+              </p>
+            </div>
+          </div>
 
           {err && <div className="text-red-600 text-sm">{err}</div>}
 

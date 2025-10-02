@@ -15,6 +15,15 @@ function getUserSlug(req) {
   if (h) return h;
   return '';
 }
+async function getMobilePaySettings(conn, userId) {
+  const [rows] = await conn.execute(
+    `SELECT enabled, bank_code, phone, id_number, account_name, deposit_percent
+       FROM mobile_pay_settings
+      WHERE user_id=? LIMIT 1`,
+    [userId]
+  );
+  return rows[0] || null;
+}
 
 /** Busca el owner por slug (usuario/tenant) */
 async function getOwnerByUser(conn, userSlug) {
@@ -220,7 +229,8 @@ r.post('/book', async (req, res) => {
     if (!owner) { await conn.rollback(); return res.status(404).json({ error:'owner_not_found' }); }
 
     const et = (await conn.execute(
-      `SELECT id, name, duration_min
+      `SELECT id, name, duration_min,
+              price_cents, deposit_percent
          FROM event_types
         WHERE user_id=? AND slug=? AND is_active=1
         LIMIT 1`,
@@ -244,13 +254,36 @@ r.post('/book', async (req, res) => {
     if (clashQ[0].length) {
       await conn.rollback(); return res.status(409).json({ error:'slot_taken' });
     }
+    const pm = await getMobilePaySettings(conn, owner.id);
+    const hasPrice   = et.price_cents != null;
+    const pmEnabled  = !!pm?.enabled;
+    const effectiveDepositPercent =
+      et.deposit_percent != null ? Number(et.deposit_percent) :
+      pm?.deposit_percent != null ? Number(pm.deposit_percent) : 30;
+
+    const willAskDeposit = pmEnabled && hasPrice && effectiveDepositPercent > 0;
+
+    const statusForInsert = willAskDeposit ? 'pending' : 'confirmed';
+    const depositCents =
+      willAskDeposit ? Math.round(Number(et.price_cents) * (effectiveDepositPercent / 100)) : null;
 
     const [ins] = await conn.execute(
-      `INSERT INTO bookings (user_id, event_type_id, guest_name, guest_email, starts_at, ends_at, status)
-       VALUES (?,?,?,?,?,?, 'confirmed')`,
-      [owner.id, et.id, body.data.guestName, body.data.guestEmail,
-       startUTC.toSQL({ includeOffset:false }),
-       endUTC.toSQL({ includeOffset:false })]
+      `INSERT INTO bookings
+          (user_id, event_type_id, guest_name, guest_email,
+          starts_at, ends_at, status,
+          price_cents, deposit_percent, deposit_cents, deposit_status)
+        VALUES (?,?,?,?,?,?,?,
+                ?, ?, ?, ?)`,
+      [
+        owner.id, et.id, body.data.guestName, body.data.guestEmail,
+        startUTC.toSQL({ includeOffset:false }),
+        endUTC.toSQL({ includeOffset:false }),
+        statusForInsert,
+        et.price_cents ?? null,
+        willAskDeposit ? effectiveDepositPercent : null,
+        depositCents,
+        willAskDeposit ? 'pending' : null
+      ]
     );
     const bookingId = ins.insertId;
 
@@ -282,12 +315,106 @@ r.post('/book', async (req, res) => {
       // no rollback: la reserva ya quedó confirmada
     }
 
-    res.json({ ok: true, id: String(bookingId) });
+    res.json({ ok: true, id: String(bookingId), status: statusForInsert });
   } catch (e) {
     console.error(e);
     try { await conn.rollback(); } catch {}
     res.status(500).json({ error: 'internal_error' });
   } finally { conn.release(); }
+});
+
+r.get('/bookings/:id', async (req, res) => {
+  const id = Number(req.params.id);
+  if (!id) return res.status(400).json({ error: 'bad_request' });
+
+  const conn = await pool.getConnection();
+  try {
+    const [rows] = await conn.execute(
+      `SELECT b.id, b.user_id, b.status, b.starts_at, b.ends_at,
+              b.guest_name, b.guest_email,
+              et.name AS event_name,
+              b.price_cents, b.deposit_percent, b.deposit_cents, b.deposit_status
+         FROM bookings b
+         JOIN event_types et ON et.id=b.event_type_id
+        WHERE b.id=? LIMIT 1`, [id]
+    );
+    if (!rows.length) return res.status(404).json({ error: 'not_found' });
+
+    const b = rows[0];
+    const payload = {
+      id: b.id,
+      status: b.status,
+      starts_at: b.starts_at,
+      ends_at: b.ends_at,
+      guest_name: b.guest_name,
+      guest_email: b.guest_email,
+      event_type: { name: b.event_name },
+    };
+
+    if (b.status === 'pending') {
+      const pm = await getMobilePaySettings(conn, b.user_id);
+      if (pm?.enabled && b.price_cents != null) {
+        payload.deposit = {
+          amount_cents: b.deposit_cents ?? Math.round(b.price_cents * ((b.deposit_percent ?? 30) / 100)),
+          mobile: {
+            bank_code: pm.bank_code || '',
+            phone: pm.phone || '',
+            id_number: pm.id_number || '',
+            account_name: pm.account_name || ''
+          }
+        };
+      }
+    }
+
+    res.json(payload);
+  } catch (e) {
+    console.error(e); res.status(500).json({ error: 'internal_error' });
+  } finally { conn.release(); }
+});
+
+r.post("/bookings/:id/deposit-ref", async (req, res) => {
+  const id = Number(req.params.id || 0);
+  if (!id) return res.status(400).json({ error: "bad_booking_id" });
+
+  const u = String(req.query.u || "").trim(); // slug del tenant (ej: clinicacaracas)
+  if (!u) return res.status(400).json({ error: "missing_u" });
+
+  // body: { ref: "0114..."}
+  const parsed = z.object({
+    ref: z.string().trim().min(4).max(64),
+  }).safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: "bad_request" });
+
+  const conn = await pool.getConnection();
+  try {
+    // busca el tenant por slug para asegurar que ese booking es suyo
+    const [users] = await conn.execute(
+      `SELECT id FROM users WHERE slug=? LIMIT 1`,
+      [u]
+    );
+    if (!users.length) return res.status(404).json({ error: "owner_not_found" });
+    const userId = users[0].id;
+
+    // actualiza la referencia
+    const [r1] = await conn.execute(
+      `UPDATE bookings
+          SET deposit_reference   = ?,
+              deposit_status      = COALESCE(deposit_status, 'pending'),
+              deposit_reference_at= NOW(3)
+        WHERE id=? AND user_id=?`,
+      [parsed.data.ref, id, userId]
+    );
+
+    if (!r1.affectedRows) {
+      return res.status(404).json({ error: "booking_not_found" });
+    }
+    return res.json({ ok: true });
+  } catch (e) {
+    console.error(e);
+    return res.status(500).json({ error: "internal_error" });
+  } finally {
+    conn.release();
+  }
 });
 
 /** ICS download (no varía por u, pero mantiene lógica existente) */
@@ -311,26 +438,31 @@ r.get('/booking/:id/ics', async (req, res) => {
     const s = new Date(bk.starts_at), e = new Date(bk.ends_at);
 
     const ics =
-`BEGIN:VCALENDAR
-VERSION:2.0
-PRODID:-//MyAgenda//EN
-METHOD:REQUEST
-BEGIN:VEVENT
-UID:booking-${bk.id}@myagenda
-DTSTAMP:${s.toISOString().replace(/[-:]/g,'').replace(/\.\d{3}Z$/,'Z')}
-DTSTART:${s.toISOString().replace(/[-:]/g,'').replace(/\.\d{3}Z$/,'Z')}
-DTEND:${e.toISOString().replace(/[-:]/g,'').replace(/\.\d{3}Z$/,'Z')}
-SUMMARY:${bk.event_name} — ${bk.guest_name}
-DESCRIPTION:Reserva #${bk.id} con ${bk.owner_name}
-STATUS:CONFIRMED
-END:VEVENT
-END:VCALENDAR`;
+    `BEGIN:VCALENDAR
+    VERSION:2.0
+    PRODID:-//MyAgenda//EN
+    METHOD:REQUEST
+    BEGIN:VEVENT
+    UID:booking-${bk.id}@myagenda
+    DTSTAMP:${s.toISOString().replace(/[-:]/g,'').replace(/\.\d{3}Z$/,'Z')}
+    DTSTART:${s.toISOString().replace(/[-:]/g,'').replace(/\.\d{3}Z$/,'Z')}
+    DTEND:${e.toISOString().replace(/[-:]/g,'').replace(/\.\d{3}Z$/,'Z')}
+    SUMMARY:${bk.event_name} — ${bk.guest_name}
+    DESCRIPTION:Reserva #${bk.id} con ${bk.owner_name}
+    STATUS:CONFIRMED
+    END:VEVENT
+    END:VCALENDAR`;
 
     res.setHeader('Content-Type', 'text/calendar; charset=utf-8');
     res.setHeader('Content-Disposition', `attachment; filename="booking-${bk.id}.ics"`);
     res.setHeader('Cache-Control', 'no-store');
     res.send(ics);
   } finally { conn.release(); }
+});
+
+r.get('/bookings/:id/ics', (req, res, next) => {
+  req.url = `/booking/${req.params.id}/ics`; // reusa el handler existente
+  next();
 });
 
 module.exports = r;
